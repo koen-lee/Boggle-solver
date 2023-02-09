@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Diagnostics;
-
-namespace BoggleSolverConsole
+﻿namespace BoggleSolverConsole
 {
     /// <summary>
     /// Tree dictionary lookup entry for a single char in a string
@@ -13,11 +7,22 @@ namespace BoggleSolverConsole
     {
         private Dictionary<char, CharDictionaryEntry> _next;
         public bool IsWord { get; private set; }
-        public string Word { get; private set; }
-
-        public CharDictionaryEntry(string sofar, bool word)
+        public string Word
         {
-            Word = sofar;
+            get
+            {
+                if (!IsWord) throw new InvalidOperationException();
+                return new string(GetChars().ToArray());
+            }
+        }
+
+        protected CharDictionaryEntry Previous { get; }
+        protected char Last { get; private set; }
+
+        public CharDictionaryEntry(CharDictionaryEntry previous, char last, bool word)
+        {
+            Previous = previous;
+            Last = last;
             IsWord = word;
         }
 
@@ -26,7 +31,16 @@ namespace BoggleSolverConsole
         /// </summary>
         private Dictionary<char, CharDictionaryEntry> Next
         {
-            get { return _next ?? (_next = new Dictionary<char, CharDictionaryEntry>(1)); }
+            get { return _next ?? (_next = new Dictionary<char, CharDictionaryEntry>(2)); }
+        }
+
+        private IEnumerable<char> GetChars()
+        {
+            if (Last == char.MinValue)
+                yield break;
+            foreach (var ch in Previous.GetChars())
+                yield return ch;
+            yield return Last;
         }
 
         public CharDictionaryEntry this[char next]
@@ -34,13 +48,12 @@ namespace BoggleSolverConsole
             get
             {
                 CharDictionaryEntry nextChar;
-                if (!Next.TryGetValue(next, out nextChar))
+                if (_next == null || !Next.TryGetValue(next, out nextChar))
                     return null;
                 return nextChar;
             }
             set
             {
-                Debug.Assert(this[next] == null);
                 Next[next] = value;
             }
         }
@@ -49,18 +62,18 @@ namespace BoggleSolverConsole
         /// Creates entries for all characters in tail and adds them to this entry.
         /// </summary>
         /// <param name="tail"></param>
-        public void AddWordTail(string tail)
+        public void AddWordTail(Span<char> tail)
         {
             CharDictionaryEntry nextChar = this[tail[0]];
             var nextIsWord = tail.Length == 1;
             if (nextChar == null)
             {
-                nextChar = new CharDictionaryEntry(Word + tail[0], nextIsWord);
+                nextChar = new CharDictionaryEntry(this, tail[0], nextIsWord);
                 this[tail[0]] = nextChar;
             }
             if (!nextIsWord) //more chars left
             {
-                nextChar.AddWordTail(tail.Substring(1)); // consume 1 char and recurse
+                nextChar.AddWordTail(tail[1..]); // consume 1 char and recurse
             }
         }
     }

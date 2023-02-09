@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
-namespace BoggleSolverConsole
+﻿namespace BoggleSolverConsole
 {
     class BoggleUtilities
     {
@@ -14,11 +9,11 @@ namespace BoggleSolverConsole
         /// <returns></returns>
         public static CharDictionaryEntry LoadWords(IEnumerable<string> words)
         {
-            var root = new CharDictionaryEntry("", false);
+            var root = new CharDictionaryEntry(null, char.MinValue, false);
             foreach (var word in words)
             {
                 if (word.Length > 3)
-                    root.AddWordTail(word.ToLower());
+                    root.AddWordTail(word.ToLower().ToCharArray());
             }
             return root;
         }
@@ -31,10 +26,10 @@ namespace BoggleSolverConsole
         /// <returns>a dictionary with words which consist of chars</returns>
         public static CharDictionaryEntry LoadWords(IEnumerable<string> words, HashSet<char> chars)
         {
-            var root = new CharDictionaryEntry("", false);
+            var root = new CharDictionaryEntry(null, char.MinValue, false);
             foreach (var word in words)
             {
-                var theword = word.ToLower();
+                var theword = word.ToLower().ToCharArray();
                 if (word.Length > 3 && theword.All(chars.Contains))
                     root.AddWordTail(theword);
             }
@@ -57,6 +52,7 @@ namespace BoggleSolverConsole
                             new bool[chars.GetLength(0), chars.GetLength(1)],
                             dictionary,
                             new Stack<Point>(),
+                            allowdiagonal: true,
                             x,
                             y
                             ))
@@ -64,9 +60,9 @@ namespace BoggleSolverConsole
                 }
         }
 
-        private static IEnumerable<BoggleSolution> FindWords(char[,] chars, bool[,] visited, CharDictionaryEntry lastStep, Stack<Point> path, int x, int y)
+        private static IEnumerable<BoggleSolution> FindWords(char[,] chars, bool[,] visited, CharDictionaryEntry lastStep, Stack<Point> path, bool allowdiagonal, int x, int y)
         {
-            if (x < 0 || y < 0 || x >= chars.GetLength(0) || y >= chars.GetLength(0) || visited[x, y])
+            if (x < 0 || y < 0 || x >= chars.GetLength(0) || y >= chars.GetLength(1) || visited[x, y])
                 yield break;
             var nextstep = lastStep[chars[x, y]];
             if (nextstep == null) // no word in this direction
@@ -79,11 +75,21 @@ namespace BoggleSolverConsole
             Array.Copy(visited, newVisited, visited.Length);
             newVisited[x, y] = true;
             foreach (var word in
-                FindWords(chars, newVisited, nextstep, path, x + 1, y).Concat(
-                FindWords(chars, newVisited, nextstep, path, x, y + 1)).Concat(
-                FindWords(chars, newVisited, nextstep, path, x - 1, y)).Concat(
-                FindWords(chars, newVisited, nextstep, path, x, y - 1)))
+                FindWords(chars, newVisited, nextstep, path, allowdiagonal, x + 1, y).Concat(
+                FindWords(chars, newVisited, nextstep, path, allowdiagonal, x, y + 1)).Concat(
+                FindWords(chars, newVisited, nextstep, path, allowdiagonal, x - 1, y)).Concat(
+                FindWords(chars, newVisited, nextstep, path, allowdiagonal, x, y - 1)))
                 yield return word;
+            if (allowdiagonal)
+            {
+                foreach (var word in
+                   FindWords(chars, newVisited, nextstep, path, allowdiagonal, x + 1, y + 1).Concat(
+                   FindWords(chars, newVisited, nextstep, path, allowdiagonal, x - 1, y + 1)).Concat(
+                   FindWords(chars, newVisited, nextstep, path, allowdiagonal, x - 1, y - 1)).Concat(
+                   FindWords(chars, newVisited, nextstep, path, allowdiagonal, x + 1, y - 1)))
+                    yield return word;
+
+            }
             path.Pop();
         }
     }
