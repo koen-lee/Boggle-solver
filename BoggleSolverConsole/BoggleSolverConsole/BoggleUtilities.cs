@@ -3,7 +3,7 @@
     class BoggleUtilities
     {
         /// <summary>
-        /// takes about 18 seconds on this puny laptop for 500.000 words
+        /// takes about 4 seconds on this puny laptop for 500.000 words
         /// </summary>
         /// <param name="words"></param>
         /// <returns></returns>
@@ -13,7 +13,7 @@
             foreach (var word in words)
             {
                 if (word.Length > 3)
-                    root.AddWordTail(word.ToLower().ToCharArray());
+                    root.AddWordTail(word.Trim().ToLower().ToCharArray());
             }
             return root;
         }

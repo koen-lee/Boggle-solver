@@ -5,7 +5,6 @@
     /// </summary>
     public class CharDictionaryEntry
     {
-        private Dictionary<char, CharDictionaryEntry> _next;
         public bool IsWord { get; private set; }
         public string Word
         {
@@ -26,13 +25,8 @@
             IsWord = word;
         }
 
-        /// <summary>
-        /// lazy-loaded wrapper.
-        /// </summary>
-        private Dictionary<char, CharDictionaryEntry> Next
-        {
-            get { return _next ?? (_next = new Dictionary<char, CharDictionaryEntry>(2)); }
-        }
+        IList<char> nextChars;
+        IList<CharDictionaryEntry> nextEntries;
 
         private IEnumerable<char> GetChars()
         {
@@ -47,14 +41,31 @@
         {
             get
             {
-                CharDictionaryEntry nextChar;
-                if (_next == null || !Next.TryGetValue(next, out nextChar))
-                    return null;
-                return nextChar;
+                if (nextChars == null) return null;
+                for (int i = nextEntries.Count - 1; i >= 0; i--)
+                {
+                    if (nextChars[i] == next)
+                        return nextEntries[i]; 
+                    if( nextChars[i] < next)
+                        return null;
+                }
+                return null;
             }
-            set
+            private set
             {
-                Next[next] = value;
+                if (nextChars == null)
+                {
+                    nextChars = new char[27];
+                    nextEntries = new List<CharDictionaryEntry>(3);
+                } else
+                {
+                    if (nextChars[nextEntries.Count - 1] > next)
+                        throw new InvalidOperationException("unsorted input");
+                }
+                
+                nextChars[nextEntries.Count] = next;
+                
+                nextEntries.Add(value);
             }
         }
 

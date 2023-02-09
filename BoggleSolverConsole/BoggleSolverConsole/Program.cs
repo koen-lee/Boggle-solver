@@ -16,7 +16,7 @@ namespace BoggleSolverConsole
             var words = File.ReadAllLines(filename);
             Console.WriteLine("Loading dictionary {0}", filename);
             var time = Stopwatch.StartNew();
-            var dictionary = BoggleUtilities.LoadWords(words, UniqueCharsIn(field));
+            var dictionary = BoggleUtilities.LoadWords(words/*, UniqueCharsIn(field)*/);
             Console.WriteLine("Loaded {0} words in {1} ms", words.Length, time.ElapsedMilliseconds);
 
             Console.WriteLine("Press enter to show words");
@@ -65,7 +65,8 @@ namespace BoggleSolverConsole
                     {
                         Console.BackgroundColor = ConsoleColor.DarkGreen;
                         Console.ForegroundColor = defaultForeground;
-                    } else
+                    }
+                    else
                     {
                         Console.ForegroundColor = originalForeground;
                     }
@@ -101,7 +102,7 @@ namespace BoggleSolverConsole
                     if (word.PathContains(new Point { X = x + 1, Y = y }, new Point { X = x, Y = y + 1 }))
                         Console.Write("/");
                     else
-                        Console.Write(".");
+                        Console.Write(" ");
 
                     Console.ForegroundColor = ConsoleColor.Gray;
                 }
@@ -119,22 +120,24 @@ namespace BoggleSolverConsole
 
         private static char[,] LoadField()
         {
-            /*            var text = @"
-            tngre
-            ihepo
-            cloBe
-            iorvn*/
-            var text = @"
+            var text = (@"
+tngre
+ihepo
+clobe
+iorvn
+" +
+/*/ var text = (@"
 porew
 rstis
 atnne
 vkati
-".ToLower().Split("\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+"+ /**/
+"").ToLower().Split("\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var xmax = text[0].Length;
             var ymax = text.Length;
             var field = new char[xmax, ymax];
             for (int x = 0; x < xmax; x++)
-                for(int y = 0; y < ymax; y++)
+                for (int y = 0; y < ymax; y++)
                 {
                     field[x, y] = text[y][x];
                 }
