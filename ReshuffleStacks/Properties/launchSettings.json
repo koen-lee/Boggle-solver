@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ReshuffleStacks": {
+      "commandName": "Project",
+      "commandLineArgs": "Stack1:1,4,5 Stack2:2 Stack3:6,3 Stack4:"
+    }
+  }
+}
