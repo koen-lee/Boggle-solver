@@ -14,13 +14,13 @@ namespace BoggleSolverConsole
             Path = path.ToArray();
         }
 
-        public IEnumerable<Point> Path { get; private set; }
+        public Point[] Path { get; private set; }
 
         public string Word { get; private set; }
 
         public bool PathContains(Point point1, Point point2)
         {
-            var prev = Path.First();
+            var prev = Path[0];
             foreach (var point in Path.Skip(1))
             {
                 if (point.Equals(point1) && prev.Equals(point2))

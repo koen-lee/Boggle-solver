@@ -60,10 +60,19 @@ namespace BoggleSolverConsole
                 for (int x = 0; x < field.GetLength(0); x++)
                 {
                     var thispoint = new Point { X = x, Y = y };
-                    // Mark the letter in the word
-                    if (word.Path.Contains(thispoint))
+                    if (word.Path[0].Equals(thispoint))// Mark the first letter in the word
                     {
                         Console.BackgroundColor = ConsoleColor.DarkGreen;
+                        Console.ForegroundColor = defaultForeground;
+                    }
+                    else if (word.Path[^1].Equals(thispoint)) // Mark the last letter in the word
+                    {
+                        Console.BackgroundColor = ConsoleColor.DarkMagenta;
+                        Console.ForegroundColor = defaultForeground;
+                    }
+                    else if (word.Path.Contains(thispoint))// Mark the letter in the word
+                    {
+                        Console.BackgroundColor = ConsoleColor.DarkYellow;
                         Console.ForegroundColor = defaultForeground;
                     }
                     else
@@ -77,7 +86,9 @@ namespace BoggleSolverConsole
                     if (word.PathContains(thispoint, new Point { X = x + 1, Y = y }))
                         Console.Write("--");
                     else
+                    {
                         Console.Write("  ");
+                    }
 
                 }
                 Console.WriteLine();
@@ -87,22 +98,29 @@ namespace BoggleSolverConsole
                     var thispoint = new Point { X = x, Y = y };
                     // mark the whitespace between lines
                     if (word.PathContains(thispoint, new Point { X = x, Y = y + 1 }))
-
                         Console.Write("|");
                     else
                         Console.Write(" ");
                     // whitespace for pretty-printing
-
-
-                    if (word.PathContains(thispoint, new Point { X = x + 1, Y = y + 1 }))
-                        Console.Write("\\");
+                    var backslash = word.PathContains(thispoint, new Point { X = x + 1, Y = y + 1 });
+                    var forwardslash = word.PathContains(new Point { X = x + 1, Y = y }, new Point { X = x, Y = y + 1 });
+                    if (backslash && forwardslash)
+                    {
+                        Console.Write("><");
+                    }
+                    else if (backslash)
+                    {
+                        Console.Write("\\_");
+                    }
+                    else if (forwardslash)
+                    {
+                        Console.Write("_/");
+                    }
                     else
-                        Console.Write(" ");
+                    {
+                        Console.Write("  ");
+                    }
 
-                    if (word.PathContains(new Point { X = x + 1, Y = y }, new Point { X = x, Y = y + 1 }))
-                        Console.Write("/");
-                    else
-                        Console.Write(" ");
 
                     Console.ForegroundColor = ConsoleColor.Gray;
                 }
