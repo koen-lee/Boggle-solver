@@ -15,29 +15,30 @@
             }
         }
 
-        protected CharDictionaryEntry Previous { get; }
+        protected CharDictionaryEntry? Previous { get; }
         protected char Last { get; private set; }
 
-        public CharDictionaryEntry(CharDictionaryEntry previous, char last, bool word)
+        public CharDictionaryEntry(CharDictionaryEntry? previous, char last, bool word)
         {
             Previous = previous;
             Last = last;
             IsWord = word;
         }
 
-        IList<char> nextChars;
-        IList<CharDictionaryEntry> nextEntries;
+        IList<char>? nextChars;
+        
+        IList<CharDictionaryEntry>? nextEntries;
 
         private IEnumerable<char> GetChars()
         {
-            if (Last == char.MinValue)
+            if (Previous == null)
                 yield break;
             foreach (var ch in Previous.GetChars())
                 yield return ch;
             yield return Last;
         }
 
-        public CharDictionaryEntry this[char next]
+        public CharDictionaryEntry? this[char next]
         {
             get
             {
@@ -75,7 +76,7 @@
         /// <param name="tail"></param>
         public void AddWordTail(Span<char> tail)
         {
-            CharDictionaryEntry nextChar = this[tail[0]];
+            var nextChar = this[tail[0]];
             var nextIsWord = tail.Length == 1;
             if (nextChar == null)
             {

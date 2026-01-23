@@ -35,7 +35,7 @@ namespace BoggleSolverConsole
             string word;
             do
             {
-                word = Console.ReadLine();
+                word = Console.ReadLine() ?? "";
                 var dict = BoggleUtilities.LoadWords(new[] { word });
 
                 var wordToDisplay = BoggleUtilities.FindWords(field, dict).FirstOrDefault();
@@ -62,7 +62,7 @@ namespace BoggleSolverConsole
                     var thispoint = new Point { X = x, Y = y };
                     if (word.Path[0].Equals(thispoint))// Mark the first letter in the word
                     {
-                        Console.BackgroundColor = ConsoleColor.DarkGreen;
+                        Console.BackgroundColor = ConsoleColor.DarkYellow;
                         Console.ForegroundColor = defaultForeground;
                     }
                     else if (word.Path[^1].Equals(thispoint)) // Mark the last letter in the word
@@ -72,7 +72,7 @@ namespace BoggleSolverConsole
                     }
                     else if (word.Path.Contains(thispoint))// Mark the letter in the word
                     {
-                        Console.BackgroundColor = ConsoleColor.DarkYellow;
+                        Console.BackgroundColor = ConsoleColor.DarkGreen;
                         Console.ForegroundColor = defaultForeground;
                     }
                     else
@@ -80,14 +80,15 @@ namespace BoggleSolverConsole
                         Console.ForegroundColor = originalForeground;
                     }
                     Console.Write(field[x, y].ToString().ToUpper());
+                    Console.Write(" ");
                     Console.BackgroundColor = ConsoleColor.Black;
                     // mark the whitespace between letters
                     Console.ForegroundColor = ConsoleColor.DarkGreen;
                     if (word.PathContains(thispoint, new Point { X = x + 1, Y = y }))
-                        Console.Write("--");
+                        Console.Write("-");
                     else
                     {
-                        Console.Write("  ");
+                        Console.Write(" ");
                     }
 
                 }
@@ -106,15 +107,15 @@ namespace BoggleSolverConsole
                     var forwardslash = word.PathContains(new Point { X = x + 1, Y = y }, new Point { X = x, Y = y + 1 });
                     if (backslash && forwardslash)
                     {
-                        Console.Write("><");
+                        Console.Write(" X");
                     }
                     else if (backslash)
                     {
-                        Console.Write("\\_");
+                        Console.Write(" \\");
                     }
                     else if (forwardslash)
                     {
-                        Console.Write("_/");
+                        Console.Write(" /");
                     }
                     else
                     {
