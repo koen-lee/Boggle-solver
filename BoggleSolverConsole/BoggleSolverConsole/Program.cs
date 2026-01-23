@@ -4,11 +4,11 @@ namespace BoggleSolverConsole
 {
     class Program
     {
-        static void Main(string[] args)
+        static void xxMain(string[] args)
         {
 
-            // var field = GenerateField(8, 8);
-            var field = LoadField();
+            var field = GenerateField(8, 8);
+            // var field = LoadField();
             DumpField(field);
 
             var filename = "woorden.txt";
