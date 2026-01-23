@@ -17,19 +17,41 @@
 
         protected CharDictionaryEntry? Previous { get; }
         protected char Last { get; private set; }
-        public IEnumerable<CharDictionaryEntry> NextEntries => nextEntries;
+
+        // Single-child optimization
+        private char? singleChildChar;
+        private CharDictionaryEntry? singleChildEntry;
+        // Multi-child mode
+        public IEnumerable<CharDictionaryEntry> NextEntries
+        {
+            get
+            {
+                if (singleChildChar.HasValue)
+                {
+                    yield return singleChildEntry!;
+                }
+                else if (nextEntries != null)
+                {
+                    foreach (var e in nextEntries)
+                        yield return e;
+                }
+            }
+        }
 
         public CharDictionaryEntry(CharDictionaryEntry? previous, char last, bool word)
         {
             Previous = previous;
             Last = last;
             IsWord = word;
-            nextEntries = Array.Empty<CharDictionaryEntry>();
+            nextEntries = null;
+            nextChars = null;
+            singleChildChar = null;
+            singleChildEntry = null;
         }
 
         IList<char>? nextChars;
 
-        IList<CharDictionaryEntry> nextEntries;
+        IList<CharDictionaryEntry>? nextEntries;
 
         private IEnumerable<char> GetChars()
         {
@@ -44,7 +66,15 @@
         {
             get
             {
-                if (nextChars == null) return null;
+                // Single-child fast path
+                if (singleChildChar.HasValue)
+                {
+                    if (singleChildChar.Value == next)
+                        return singleChildEntry;
+                    return null;
+                }
+                // Multi-child mode
+                if (nextChars == null || nextEntries == null) return null;
                 for (int i = nextEntries.Count - 1; i >= 0; i--)
                 {
                     if (nextChars[i] == next)
@@ -56,19 +86,28 @@
             }
             private set
             {
-                if (nextChars == null)
+                ArgumentNullException.ThrowIfNull(value);
+                // No children yet
+                if (!singleChildChar.HasValue && nextChars == null)
+                {
+                    singleChildChar = next;
+                    singleChildEntry = value;
+                    return;
+                }
+                // Already in single-child mode, need to upgrade to multi-child
+                if (singleChildChar.HasValue && nextChars == null)
                 {
                     nextChars = new char[27];
                     nextEntries = new List<CharDictionaryEntry>(3);
+                    nextChars[0] = singleChildChar.Value;
+                    nextEntries.Add(singleChildEntry!);
+                    singleChildChar = null;
+                    singleChildEntry = null;
                 }
-                else
-                {
-                    if (nextChars[nextEntries.Count - 1] > next)
-                        throw new InvalidOperationException("unsorted input");
-                }
-                ArgumentNullException.ThrowIfNull(value);
+                // Multi-child mode
+                if (nextChars![nextEntries!.Count - 1] > next)
+                    throw new InvalidOperationException("unsorted input");
                 nextChars[nextEntries.Count] = next;
-
                 nextEntries.Add(value);
             }
         }
@@ -94,9 +133,15 @@
 
         internal void WriteTo(BinaryWriter stream, int[] sizes)
         {
+            // Determine number of children
+            int count = 0;
+            if (singleChildChar.HasValue)
+                count = 1;
+            else if (nextChars != null && nextEntries != null)
+                count = nextEntries.Count;
+            sizes[count]++;
             // nextentries are at most 27, so size fits in a 5 bit field.
-            byte size = (byte)nextEntries.Count;
-            sizes[size]++;
+            byte size = (byte)count;
             // So there is room to pack IsWord in the high bit.
             size |= (byte)(IsWord ? 0x80 : 0x00);
             // chars will be in the lowercase a-z range (hence the 27), so we can store them as a single byte.
@@ -106,9 +151,16 @@
                 throw new NotSupportedException("Non-ascii character in dictionary");
             stream.Write(size);
             stream.Write(bytes[0]);
-            for (int i = 0; i < nextEntries.Count; i++)
+            if (singleChildChar.HasValue)
             {
-                nextEntries[i].WriteTo(stream, sizes);
+                singleChildEntry!.WriteTo(stream, sizes);
+            }
+            else if (nextChars != null && nextEntries != null)
+            {
+                for (int i = 0; i < nextEntries.Count; i++)
+                {
+                    nextEntries[i].WriteTo(stream, sizes);
+                }
             }
         }
 
@@ -119,15 +171,21 @@
             int count = size & 0x1F; // 5 bits for count (0-27)
             char last = (char)reader.ReadByte();
             var entry = new CharDictionaryEntry(previous, last, isWord);
-            if (count > 0)
+            if (count == 1)
             {
-                entry.nextEntries = new CharDictionaryEntry[count];
+                var child = ReadFrom(reader, entry);
+                entry.singleChildChar = child.Last;
+                entry.singleChildEntry = child;
+            }
+            else if (count > 1)
+            {
                 entry.nextChars = new char[count];
+                entry.nextEntries = new CharDictionaryEntry[count];
                 for (int i = 0; i < count; i++)
                 {
                     var child = ReadFrom(reader, entry);
-                    entry.nextEntries[i] = child;
                     entry.nextChars[i] = child.Last;
+                    entry.nextEntries[i] = child;
                 }
             }
             return entry;
