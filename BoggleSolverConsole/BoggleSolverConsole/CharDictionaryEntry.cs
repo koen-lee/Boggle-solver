@@ -23,11 +23,12 @@
             Previous = previous;
             Last = last;
             IsWord = word;
+            nextEntries = Array.Empty<CharDictionaryEntry>();
         }
 
         IList<char>? nextChars;
-        
-        IList<CharDictionaryEntry>? nextEntries;
+
+        IList<CharDictionaryEntry> nextEntries;
 
         private IEnumerable<char> GetChars()
         {
@@ -46,8 +47,8 @@
                 for (int i = nextEntries.Count - 1; i >= 0; i--)
                 {
                     if (nextChars[i] == next)
-                        return nextEntries[i]; 
-                    if( nextChars[i] < next)
+                        return nextEntries[i];
+                    if (nextChars[i] < next)
                         return null;
                 }
                 return null;
@@ -58,14 +59,15 @@
                 {
                     nextChars = new char[27];
                     nextEntries = new List<CharDictionaryEntry>(3);
-                } else
+                }
+                else
                 {
                     if (nextChars[nextEntries.Count - 1] > next)
                         throw new InvalidOperationException("unsorted input");
                 }
-                
+                ArgumentNullException.ThrowIfNull(value);
                 nextChars[nextEntries.Count] = next;
-                
+
                 nextEntries.Add(value);
             }
         }
