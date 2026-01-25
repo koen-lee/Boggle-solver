@@ -25,4 +25,10 @@
     <ProjectReference Include="..\BoggleSolverConsole\BoggleSolverConsole.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\BoggleSolverConsole\woorden.txt" Link="woorden.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

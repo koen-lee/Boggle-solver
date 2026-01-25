@@ -1,10 +1,19 @@
+using System.Diagnostics;
 using BoggleSolverConsole.Bits;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace BoggleSolverConsole.Tests;
 
 public class BinaryTrieTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public BinaryTrieTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     [Fact]
     public void BuildFromWords_SingleWord_ContainsIt()
     {
@@ -383,5 +392,61 @@ public class BinaryTrieTests
         // 5-bit encoding should produce smaller output
         Assert.True(ms5.Length < ms8.Length,
             $"5-bit ({ms5.Length} bytes) should be smaller than 8-bit ({ms8.Length} bytes)");
+    }
+
+    [Fact]
+    public void Woorden_FullDictionary_RoundtripWithStats()
+    {
+        // Load woorden.txt (Dutch word list)
+        var words = File.ReadAllLines("woorden.txt")
+            .Select(w => w.ToLowerInvariant())
+            .ToArray();
+
+        _output.WriteLine($"Loaded {words.Length} words");
+
+        // Build trie with timing
+        var sw = Stopwatch.StartNew();
+        var trie = BinaryTrieNode.BuildFromWords(words, CharEncoding.Compact5Bit);
+        var buildTime = sw.Elapsed;
+
+        // Get stats with histogram
+        var (nodeCount, totalPrefixBits, wordCount, histogram) = trie.GetStatsWithHistogram();
+        _output.WriteLine($"Build time: {buildTime.TotalMilliseconds:F1}ms");
+        _output.WriteLine($"Nodes: {nodeCount}, Total prefix bits: {totalPrefixBits}, Words: {wordCount}");
+
+        // Print prefix histogram
+        _output.WriteLine("\nPrefix size histogram:");
+        foreach (var kvp in histogram.OrderBy(k => k.Key))
+        {
+            _output.WriteLine($"  {kvp.Key,3} bits: {kvp.Value,6} nodes");
+        }
+
+        // Serialize with timing
+        sw.Restart();
+        using var ms = new MemoryStream();
+        var writer = new BitWriter(ms);
+        trie.WriteTo(writer);
+        writer.Flush();
+        var serializeTime = sw.Elapsed;
+
+        _output.WriteLine($"\nSerialize time: {serializeTime.TotalMilliseconds:F1}ms");
+        _output.WriteLine($"Serialized size: {ms.Length:N0} bytes ({ms.Length * 8:N0} bits)");
+
+        // Deserialize with timing
+        ms.Position = 0;
+        sw.Restart();
+        var reader = new BitReader(ms);
+        var restored = BinaryTrieNode.ReadFrom(reader);
+        var deserializeTime = sw.Elapsed;
+
+        _output.WriteLine($"Deserialize time: {deserializeTime.TotalMilliseconds:F1}ms");
+
+        // Verify roundtrip
+        var (restoredNodes, _, restoredWords, _) = restored.GetStatsWithHistogram();
+        Assert.Equal(wordCount, restoredWords);
+
+        // Spot check some words
+        Assert.True(restored.Contains("aachen", CharEncoding.Compact5Bit));
+        Assert.True(restored.Contains("a capella", CharEncoding.Compact5Bit));
     }
 }

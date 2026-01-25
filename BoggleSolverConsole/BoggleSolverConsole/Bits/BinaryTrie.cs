@@ -408,26 +408,45 @@ namespace BoggleSolverConsole.Bits
         /// </summary>
         public (int nodeCount, int totalPrefixBits, int wordCount) GetStats()
         {
-            int nodes = 1;
-            int prefixBits = Prefix.Length;
-            int words = IsWord ? 1 : 0;
+            var (nodes, prefixBits, words, _) = GetStatsWithHistogram();
+            return (nodes, prefixBits, words);
+        }
+
+        /// <summary>
+        /// Get statistics about the trie including prefix size histogram
+        /// </summary>
+        public (int nodeCount, int totalPrefixBits, int wordCount, Dictionary<int, int> prefixHistogram) GetStatsWithHistogram()
+        {
+            var histogram = new Dictionary<int, int>();
+            GetStatsRecursive(histogram, out int nodes, out int prefixBits, out int words);
+            return (nodes, prefixBits, words, histogram);
+        }
+
+        private void GetStatsRecursive(Dictionary<int, int> histogram, out int nodes, out int prefixBits, out int words)
+        {
+            nodes = 1;
+            prefixBits = Prefix.Length;
+            words = IsWord ? 1 : 0;
+
+            // Track prefix length in histogram
+            int len = Prefix.Length;
+            histogram.TryGetValue(len, out int count);
+            histogram[len] = count + 1;
 
             if (Left != null)
             {
-                var (n, p, w) = Left.GetStats();
+                Left.GetStatsRecursive(histogram, out int n, out int p, out int w);
                 nodes += n;
                 prefixBits += p;
                 words += w;
             }
             if (Right != null)
             {
-                var (n, p, w) = Right.GetStats();
+                Right.GetStatsRecursive(histogram, out int n, out int p, out int w);
                 nodes += n;
                 prefixBits += p;
                 words += w;
             }
-
-            return (nodes, prefixBits, words);
         }
     }
 }
