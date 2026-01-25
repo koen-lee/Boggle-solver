@@ -17,17 +17,13 @@ namespace BoggleSolverConsole
             Console.WriteLine($"Word file: {wordFile.FullName}, size: {wordFile.Length:N0} bytes");
             var serializedFile = Path.ChangeExtension(wordFile.FullName, ".bin");
             //Write serialized dictionary
-            var sizes = new int[28];
             using (var stopwatch = new ConsoleStopwatch("Serializing dictionary"))
             using (var fs = File.Create(serializedFile))
             using (var writer = new BinaryWriter(fs))
-                dictionary.WriteTo(writer, sizes);
+                dictionary.WriteTo(writer);
             FileInfo serializedFileInfo = new FileInfo(serializedFile);
             Console.WriteLine($"Serialized dictionary to: {serializedFileInfo.FullName}, size: {serializedFileInfo.Length:N0} bytes");
-            foreach (var sizeCount in sizes.Select((count, size) => (size, count)).Where(sc => sc.count > 0))
-            {
-                Console.WriteLine($"  Entries with {sizeCount.size} children: {sizeCount.count:N0}");
-            }
+          
             //Read serialized dictionary
             CharDictionaryEntry deserializedDictionary;
             using (var stopwatch = new ConsoleStopwatch("Deserializing dictionary"))

@@ -131,7 +131,7 @@
             }
         }
 
-        internal void WriteTo(BinaryWriter stream, int[] sizes)
+        internal void WriteTo(BinaryWriter stream)
         {
             // Determine number of children
             int count = 0;
@@ -139,7 +139,6 @@
                 count = 1;
             else if (nextChars != null && nextEntries != null)
                 count = nextEntries.Count;
-            sizes[count]++;
             // nextentries are at most 27, so size fits in a 5 bit field.
             byte size = (byte)count;
             // So there is room to pack IsWord in the high bit.
@@ -153,13 +152,13 @@
             stream.Write(bytes[0]);
             if (singleChildChar.HasValue)
             {
-                singleChildEntry!.WriteTo(stream, sizes);
+                singleChildEntry!.WriteTo(stream);
             }
             else if (nextChars != null && nextEntries != null)
             {
                 for (int i = 0; i < nextEntries.Count; i++)
                 {
-                    nextEntries[i].WriteTo(stream, sizes);
+                    nextEntries[i].WriteTo(stream);
                 }
             }
         }
