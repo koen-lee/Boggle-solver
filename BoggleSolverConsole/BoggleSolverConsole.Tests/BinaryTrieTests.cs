@@ -1,3 +1,4 @@
+using BoggleSolverConsole.Bits;
 using Xunit;
 
 namespace BoggleSolverConsole.Tests;
