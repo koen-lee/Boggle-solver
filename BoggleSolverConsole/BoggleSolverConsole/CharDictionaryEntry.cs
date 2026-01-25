@@ -139,17 +139,36 @@
                 count = 1;
             else if (nextChars != null && nextEntries != null)
                 count = nextEntries.Count;
-            // nextentries are at most 27, so size fits in a 5 bit field.
-            byte size = (byte)count;
-            // So there is room to pack IsWord in the high bit.
-            size |= (byte)(IsWord ? 0x80 : 0x00);
-            // chars will be in the lowercase a-z range (hence the 27), so we can store them as a single byte.
-            // When needed, we have still bits left in size to indicate extended encoding.
-            var bytes = System.Text.Encoding.UTF8.GetBytes([Last]);
-            if (bytes.Length != 1)
-                throw new NotSupportedException("Non-ascii character in dictionary");
-            stream.Write(size);
-            stream.Write(bytes[0]);
+
+            // Convert char to 5-bit value (a-z=0-25, space=26, root '\0'=27)
+            int charValue;
+            if (Last >= 'a' && Last <= 'z')
+                charValue = Last - 'a';
+            else if (Last == ' ')
+                charValue = 26;
+            else if (Last == char.MinValue)
+                charValue = 27;
+            else
+                throw new NotSupportedException($"Character '{Last}' not supported");
+
+            // Pack into single byte when size < 3:
+            // Bit 7: IsWord
+            // Bits 5-6: Size (0, 1, 2) or 3 for extended
+            // Bits 0-4: Char (5-bit)
+            if (count < 3)
+            {
+                byte packed = (byte)((IsWord ? 0x80 : 0) | (count << 5) | charValue);
+                stream.Write(packed);
+            }
+            else
+            {
+                // Extended: size indicator = 3 means read next byte for actual count
+                byte packed = (byte)((IsWord ? 0x80 : 0) | (3 << 5) | charValue);
+                stream.Write(packed);
+                stream.Write((byte)count);
+            }
+
+            // Write children
             if (singleChildChar.HasValue)
             {
                 singleChildEntry!.WriteTo(stream);
@@ -165,10 +184,33 @@
 
         public static CharDictionaryEntry ReadFrom(BinaryReader reader, CharDictionaryEntry? previous = null)
         {
-            byte size = reader.ReadByte();
-            bool isWord = (size & 0x80) != 0;
-            int count = size & 0x1F; // 5 bits for count (0-27)
-            char last = (char)reader.ReadByte();
+            byte packed = reader.ReadByte();
+            bool isWord = (packed & 0x80) != 0;
+            int sizeIndicator = (packed >> 5) & 0x03; // 2 bits
+            int charValue = packed & 0x1F; // 5 bits
+
+            // Decode char (a-z=0-25, space=26, root '\0'=27)
+            char last;
+            if (charValue <= 25)
+                last = (char)('a' + charValue);
+            else if (charValue == 26)
+                last = ' ';
+            else if (charValue == 27)
+                last = char.MinValue;
+            else
+                throw new NotSupportedException($"Invalid char value {charValue}");
+
+            int count;
+            if (sizeIndicator < 3)
+            {
+                count = sizeIndicator;
+            }
+            else
+            {
+                // Extended size in next byte
+                count = reader.ReadByte();
+            }
+
             var entry = new CharDictionaryEntry(previous, last, isWord);
             if (count == 1)
             {
