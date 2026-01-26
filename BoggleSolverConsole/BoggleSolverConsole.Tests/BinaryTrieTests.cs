@@ -255,6 +255,45 @@ public class BinaryTrieTests
     }
 
     [Fact]
+    public void Insert_OnCollapsedTrie_WorksCorrectly()
+    {
+        // Build and collapse a trie with one word
+        var trie = BinaryTrieNode.BuildFromWords(["cat"]);
+        Assert.True(trie.Contains("cat"));
+
+        // Insert a word that diverges early (different first char)
+        trie.Insert("dog");
+        Assert.True(trie.Contains("cat"));
+        Assert.True(trie.Contains("dog"));
+
+        // Insert a word that shares a prefix
+        trie.Insert("car");
+        Assert.True(trie.Contains("cat"));
+        Assert.True(trie.Contains("car"));
+        Assert.True(trie.Contains("dog"));
+
+        // Insert a word that is a prefix of existing
+        trie.Insert("ca");
+        Assert.True(trie.Contains("ca"));
+        Assert.True(trie.Contains("cat"));
+        Assert.True(trie.Contains("car"));
+
+        // Insert a word that extends existing
+        trie.Insert("cats");
+        Assert.True(trie.Contains("cats"));
+        Assert.True(trie.Contains("cat"));
+
+        // Verify enumeration returns all words
+        var words = trie.EnumerateWords().ToHashSet();
+        Assert.Equal(5, words.Count);
+        Assert.Contains("cat", words);
+        Assert.Contains("car", words);
+        Assert.Contains("ca", words);
+        Assert.Contains("cats", words);
+        Assert.Contains("dog", words);
+    }
+
+    [Fact]
     public void EnumerateWords_ReturnsAllWords()
     {
         var words = new[] { "cat", "car", "card", "care", "dog" };
@@ -415,11 +454,13 @@ public class BinaryTrieTests
         _output.WriteLine($"Nodes: {nodeCount}, Total prefix bits: {totalPrefixBits}, Words: {wordCount}");
 
         // Print prefix histogram
-        _output.WriteLine("\nPrefix size histogram:");
-        foreach (var kvp in histogram.OrderBy(k => k.Key))
+        _output.WriteLine("\nOriginal Prefix size histogram:");
+        foreach (var kvp in histogram.Where(kvp => kvp.Key <= 64).OrderBy(k => k.Key))
         {
-            _output.WriteLine($"  {kvp.Key,3} bits: {kvp.Value,6} nodes");
+            _output.WriteLine($"  {kvp.Key,3} bits: {kvp.Value,6} nodes ");
         }
+        int moreThan64 = histogram.Where(kvp => kvp.Key > 64).Sum(kvp => kvp.Value);
+        _output.WriteLine($" > 64 bits: {moreThan64,6} nodes");
 
         // Serialize with timing
         sw.Restart();
@@ -430,7 +471,10 @@ public class BinaryTrieTests
         var serializeTime = sw.Elapsed;
 
         _output.WriteLine($"\nSerialize time: {serializeTime.TotalMilliseconds:F1}ms");
+        _output.WriteLine($"Chunk sizes: [{string.Join(", ", BinaryTrieNode.ChunkSizes)}]");
+
         _output.WriteLine($"Serialized size: {ms.Length:N0} bytes ({ms.Length * 8:N0} bits)");
+
 
         // Deserialize with timing
         ms.Position = 0;

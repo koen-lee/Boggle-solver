@@ -32,95 +32,207 @@ namespace BoggleSolverConsole.Bits
             foreach (var word in words)
             {
                 var bits = encoding.StringToBits(word);
-                Insert(root, bits, 0);
+                root.Insert(bits, 0);
             }
 
             // Collapse single-child chains into prefixes
-            Collapse(root);
+            root.Collapse();
 
             return root;
         }
 
-        private static void Insert(BinaryTrieNode node, BitArray bits, int index)
+        /// <summary>
+        /// Insert a word into the trie using default 8-bit encoding
+        /// </summary>
+        public void Insert(string word)
+            => Insert(word, CharEncoding.Ascii8Bit);
+
+        /// <summary>
+        /// Insert a word into the trie using specified encoding
+        /// </summary>
+        public void Insert(string word, CharEncoding encoding)
         {
-            if (index == bits.Length)
+            var bits = encoding.StringToBits(word);
+            Insert(bits, 0);
+        }
+
+        private void Insert(BitArray bits, int index)
+        {
+            // Match prefix first
+            int prefixIndex = 0;
+            while (prefixIndex < Prefix.Length && index < bits.Length)
             {
-                node.IsWord = true;
+                if (bits[index] != Prefix[prefixIndex])
+                {
+                    // Divergence in prefix - split the node
+                    SplitAt(prefixIndex, bits, index);
+                    return;
+                }
+                prefixIndex++;
+                index++;
+            }
+
+            if (prefixIndex < Prefix.Length)
+            {
+                // Word ends in the middle of prefix - split the node
+                SplitAt(prefixIndex, bits, index);
                 return;
             }
 
+            // Prefix fully matched
+            if (index == bits.Length)
+            {
+                IsWord = true;
+                return;
+            }
+
+            // Continue to child
             bool bit = bits[index];
             if (bit)
             {
-                node.Right ??= new BinaryTrieNode();
-                Insert(node.Right, bits, index + 1);
+                Right ??= new BinaryTrieNode();
+                Right.Insert(bits, index + 1);
             }
             else
             {
-                node.Left ??= new BinaryTrieNode();
-                Insert(node.Left, bits, index + 1);
+                Left ??= new BinaryTrieNode();
+                Left.Insert(bits, index + 1);
+            }
+        }
+
+        /// <summary>
+        /// Split this node at the given prefix index, creating a child for the remaining prefix
+        /// and inserting bits for a new word that diverges at this point.
+        /// </summary>
+        private void SplitAt(int splitIndex, BitArray newBits, int newBitIndex)
+        {
+            // Create child node with remainder of original prefix
+            var child = new BinaryTrieNode
+            {
+                IsWord = IsWord,
+                Left = Left,
+                Right = Right
+            };
+
+            // Set child's prefix to remaining bits after split
+            int remainingLength = Prefix.Length - splitIndex - 1;
+            if (remainingLength > 0)
+            {
+                var remainingPrefix = new bool[remainingLength];
+                for (int i = 0; i < remainingLength; i++)
+                    remainingPrefix[i] = Prefix[splitIndex + 1 + i];
+                child.Prefix = new BitArray(remainingPrefix);
+            }
+
+            // Determine which branch the original prefix continues on
+            bool originalBit = Prefix[splitIndex];
+
+            // Truncate this node's prefix
+            if (splitIndex > 0)
+            {
+                var truncatedPrefix = new bool[splitIndex];
+                for (int i = 0; i < splitIndex; i++)
+                    truncatedPrefix[i] = Prefix[i];
+                Prefix = new BitArray(truncatedPrefix);
+            }
+            else
+            {
+                Prefix = new BitArray(0);
+            }
+
+            // Reset this node - it becomes a branch point
+            IsWord = false;
+            Left = null;
+            Right = null;
+
+            // Place original content on appropriate branch
+            if (originalBit)
+                Right = child;
+            else
+                Left = child;
+
+            // Now insert the new word from this point
+            if (newBitIndex == newBits.Length)
+            {
+                // New word ends exactly at split point
+                IsWord = true;
+            }
+            else
+            {
+                // New word continues - create/follow branch
+                bool newBit = newBits[newBitIndex];
+                if (newBit)
+                {
+                    Right ??= new BinaryTrieNode();
+                    Right.Insert(newBits, newBitIndex + 1);
+                }
+                else
+                {
+                    Left ??= new BinaryTrieNode();
+                    Left.Insert(newBits, newBitIndex + 1);
+                }
             }
         }
 
         /// <summary>
         /// Collapse single-child chains into prefix runs
         /// </summary>
-        private static void Collapse(BinaryTrieNode node)
+        private void Collapse()
         {
             // First, recursively collapse children
-            if (node.Left != null) Collapse(node.Left);
-            if (node.Right != null) Collapse(node.Right);
+            Left?.Collapse();
+            Right?.Collapse();
 
             // Now collapse this node's single-child chains
             // Collect prefix bits while we have exactly one child and are not a word
             var prefixBits = new List<bool>();
 
-            while (!node.IsWord && (node.Left == null) != (node.Right == null))
+            while (!IsWord && (Left == null) != (Right == null))
             {
                 // Exactly one child
-                if (node.Left != null)
+                if (Left != null)
                 {
                     prefixBits.Add(false); // 0
-                    var child = node.Left;
+                    var child = Left;
                     // Absorb child's prefix
                     for (int i = 0; i < child.Prefix.Length; i++)
                         prefixBits.Add(child.Prefix[i]);
                     // Move child's data up
-                    node.IsWord = child.IsWord;
-                    node.Left = child.Left;
-                    node.Right = child.Right;
+                    IsWord = child.IsWord;
+                    Left = child.Left;
+                    Right = child.Right;
                 }
-                else // node.Right != null
+                else // Right != null
                 {
                     prefixBits.Add(true); // 1
-                    var child = node.Right;
+                    var child = Right!;
                     // Absorb child's prefix
                     for (int i = 0; i < child.Prefix.Length; i++)
                         prefixBits.Add(child.Prefix[i]);
                     // Move child's data up
-                    node.IsWord = child.IsWord;
-                    node.Left = child.Left;
-                    node.Right = child.Right;
+                    IsWord = child.IsWord;
+                    Left = child.Left;
+                    Right = child.Right;
                 }
             }
 
             if (prefixBits.Count > 0)
             {
-                node.Prefix = new BitArray(prefixBits.ToArray());
+                Prefix = new BitArray(prefixBits.ToArray());
             }
         }
 
         /// <summary>
+        /// Chunk sizes indexed by 3-bit code. Must be in ascending order.
+        /// Code 0 = no prefix, just the implicit branch bit, codes 1-7 = prefix chunk sizes.
+        /// </summary>
+        public static readonly int[] ChunkSizes = [0, 1, 2, 3, 4, 9, 14, 24];
+
+        /// <summary>
         /// Serialize to bit stream using compact encoding:
-        /// 1 bit: IsWord
-        /// 1 bit: HasChildren
-        /// If IsWord=0 and HasChildren=0: dead end (just 2 bits total)
-        /// Otherwise:
-        ///   2 bits: prefix length (00=0, 01=2 bits, 10=8 bits, 11=32 bits)
-        ///   [prefix bits - fixed length based on code]
-        ///   If HasChildren: [left subtree][right subtree]
-        ///
-        /// Non-existent branches are encoded as dead ends (2 bits).
+        /// - 2 bits: IsWord + HasChildren
+        /// - If dead end (IsWord=0, HasChildren=0): just 2 bits total
+        /// - Otherwise: 3-bit chunk code + chunk bits + children
         /// </summary>
         public void WriteTo(BitWriter writer)
         {
@@ -129,39 +241,25 @@ namespace BoggleSolverConsole.Bits
 
         private static void WriteDeadEnd(BitWriter writer)
         {
-            writer.WriteBit(false); // IsWord = false
-            writer.WriteBit(false); // HasChildren = false
-            // No prefix code - dead end is just 2 bits
+            // IsWord = false, HasChildren = false
+            writer.WriteBits(00, 2);
         }
 
         private void WriteTo(BitWriter writer, BitArray prefix, int prefixOffset)
         {
             int remaining = prefix.Length - prefixOffset;
 
-            // Determine chunk size: 32, 8, 2, or 0
-            int chunkSize;
-            uint chunkCode;
-            if (remaining >= 32)
+            // Find largest chunk size that fits
+            int chunkCode = 0;
+            for (int i = ChunkSizes.Length - 1; i >= 1; i--)
             {
-                chunkSize = 32;
-                chunkCode = 0b11;
+                if (remaining >= ChunkSizes[i])
+                {
+                    chunkCode = i;
+                    break;
+                }
             }
-            else if (remaining >= 8)
-            {
-                chunkSize = 8;
-                chunkCode = 0b10;
-            }
-            else if (remaining >= 2)
-            {
-                chunkSize = 2;
-                chunkCode = 0b01;
-            }
-            else
-            {
-                chunkSize = 0;
-                chunkCode = 0b00;
-            }
-
+            int chunkSize = ChunkSizes[chunkCode];
             int afterChunk = remaining - chunkSize;
 
             // If we still have bits after this chunk, we need intermediate nodes
@@ -170,7 +268,7 @@ namespace BoggleSolverConsole.Bits
                 // Intermediate node: not a word, has children
                 writer.WriteBit(false); // IsWord = false
                 writer.WriteBit(true);  // HasChildren = true
-                writer.WriteBits(chunkCode, 2);
+                writer.WriteBits((uint)chunkCode, 3);
 
                 // Write chunk bits
                 for (int i = 0; i < chunkSize; i++)
@@ -197,7 +295,7 @@ namespace BoggleSolverConsole.Bits
                 // Final node: write actual IsWord and children
                 writer.WriteBit(IsWord);
                 writer.WriteBit(HasChildren);
-                writer.WriteBits(chunkCode, 2);
+                writer.WriteBits((uint)chunkCode, 3);
 
                 // Write chunk bits
                 for (int i = 0; i < chunkSize; i++)
@@ -263,15 +361,8 @@ namespace BoggleSolverConsole.Bits
             }
 
             // Read prefix chunk
-            uint lengthCode = reader.ReadBits(2);
-            int chunkSize = lengthCode switch
-            {
-                0b00 => 0,
-                0b01 => 2,
-                0b10 => 8,
-                0b11 => 32,
-                _ => throw new InvalidOperationException()
-            };
+            uint lengthCode = reader.ReadBits(3);
+            int chunkSize = ChunkSizes[lengthCode];
 
             for (int i = 0; i < chunkSize; i++)
             {
