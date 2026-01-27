@@ -452,7 +452,7 @@ public class BinaryTrieTests
         var (nodeCount, totalPrefixBits, wordCount, histogram) = trie.GetStatsWithHistogram();
         _output.WriteLine($"Build time: {buildTime.TotalMilliseconds:F1}ms");
         _output.WriteLine($"Nodes: {nodeCount}, Total prefix bits: {totalPrefixBits}, Words: {wordCount}");
-
+/*
         // Print prefix histogram
         _output.WriteLine("\nOriginal Prefix size histogram:");
         foreach (var kvp in histogram.Where(kvp => kvp.Key <= 64).OrderBy(k => k.Key))
@@ -461,7 +461,7 @@ public class BinaryTrieTests
         }
         int moreThan64 = histogram.Where(kvp => kvp.Key > 64).Sum(kvp => kvp.Value);
         _output.WriteLine($" > 64 bits: {moreThan64,6} nodes");
-
+*/
         // Serialize with timing
         sw.Restart();
         using var ms = new MemoryStream();

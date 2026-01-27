@@ -23,7 +23,9 @@ namespace BoggleSolverConsole.Bits
             => BuildFromWords(words, CharEncoding.Ascii8Bit);
 
         /// <summary>
-        /// Build binary trie from a list of words using specified encoding
+        /// Build binary trie from a list of words using specified encoding.
+        /// Nodes are created with prefixes during insertion, with a final collapse pass
+        /// to merge any remaining single-child chains.
         /// </summary>
         public static BinaryTrieNode BuildFromWords(IEnumerable<string> words, CharEncoding encoding)
         {
@@ -35,7 +37,7 @@ namespace BoggleSolverConsole.Bits
                 root.Insert(bits, 0);
             }
 
-            // Collapse single-child chains into prefixes
+            // Final pass to collapse any remaining single-child chains
             root.Collapse();
 
             return root;
@@ -90,14 +92,56 @@ namespace BoggleSolverConsole.Bits
             bool bit = bits[index];
             if (bit)
             {
-                Right ??= new BinaryTrieNode();
-                Right.Insert(bits, index + 1);
+                if (Right == null)
+                {
+                    // Create new leaf node with remaining bits as prefix (already collapsed)
+                    Right = CreateLeafWithPrefix(bits, index + 1);
+                }
+                else
+                {
+                    Right.Insert(bits, index + 1);
+                }
             }
             else
             {
-                Left ??= new BinaryTrieNode();
-                Left.Insert(bits, index + 1);
+                if (Left == null)
+                {
+                    // Create new leaf node with remaining bits as prefix (already collapsed)
+                    Left = CreateLeafWithPrefix(bits, index + 1);
+                }
+                else
+                {
+                    Left.Insert(bits, index + 1);
+                }
             }
+        }
+
+        /// <summary>
+        /// Create a new leaf node with the remaining bits as its prefix.
+        /// This avoids creating a chain of single-child nodes that would need collapsing.
+        /// </summary>
+        private static BinaryTrieNode CreateLeafWithPrefix(BitArray bits, int startIndex)
+        {
+            return new BinaryTrieNode
+            {
+                IsWord = true,
+                Prefix = SliceBitArray(bits, startIndex, bits.Length - startIndex)
+            };
+        }
+
+        /// <summary>
+        /// Create a new BitArray containing a slice of the source array.
+        /// </summary>
+        private static BitArray SliceBitArray(BitArray source, int start, int length)
+        {
+            if (length == 0)
+                return new BitArray(0);
+            var result = new BitArray(length);
+            for (int i = 0; i < length; i++)
+            {
+                result[i] = source[start + i];
+            }
+            return result;
         }
 
         /// <summary>
