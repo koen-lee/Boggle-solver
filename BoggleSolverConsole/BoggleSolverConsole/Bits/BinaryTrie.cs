@@ -5,12 +5,12 @@ namespace BoggleSolverConsole.Bits
 
     /// <summary>
     /// Binary prefix trie (Patricia trie) where each character is represented as bits.
-    /// Nodes with single children are collapsed into prefix runs.
+    /// Nodes with single children are collapsed into prefix runs (max 24 bits per node).
     /// </summary>
     public class BinaryTrieNode
     {
         public bool IsWord { get; set; }
-        public BitArray Prefix { get; set; } = new BitArray(0);
+        public BitPrefix Prefix { get; set; }
         public BinaryTrieNode? Left { get; set; }  // 0 branch
         public BinaryTrieNode? Right { get; set; } // 1 branch
 
@@ -118,30 +118,39 @@ namespace BoggleSolverConsole.Bits
 
         /// <summary>
         /// Create a new leaf node with the remaining bits as its prefix.
-        /// This avoids creating a chain of single-child nodes that would need collapsing.
+        /// If the prefix exceeds MaxLength, creates a chain of nodes.
         /// </summary>
         private static BinaryTrieNode CreateLeafWithPrefix(BitArray bits, int startIndex)
         {
-            return new BinaryTrieNode
-            {
-                IsWord = true,
-                Prefix = SliceBitArray(bits, startIndex, bits.Length - startIndex)
-            };
-        }
+            int remaining = bits.Length - startIndex;
 
-        /// <summary>
-        /// Create a new BitArray containing a slice of the source array.
-        /// </summary>
-        private static BitArray SliceBitArray(BitArray source, int start, int length)
-        {
-            if (length == 0)
-                return new BitArray(0);
-            var result = new BitArray(length);
-            for (int i = 0; i < length; i++)
+            if (remaining <= BitPrefix.MaxLength)
             {
-                result[i] = source[start + i];
+                // Simple case: fits in one node
+                return new BinaryTrieNode
+                {
+                    IsWord = true,
+                    Prefix = BitPrefix.FromBitArray(bits, startIndex, remaining)
+                };
             }
-            return result;
+
+            // Need to create a chain: take MaxLength bits, then branch to rest
+            var node = new BinaryTrieNode
+            {
+                IsWord = false,
+                Prefix = BitPrefix.FromBitArray(bits, startIndex, BitPrefix.MaxLength)
+            };
+
+            // The next bit determines which child branch
+            bool nextBit = bits[startIndex + BitPrefix.MaxLength];
+            var child = CreateLeafWithPrefix(bits, startIndex + BitPrefix.MaxLength + 1);
+
+            if (nextBit)
+                node.Right = child;
+            else
+                node.Left = child;
+
+            return node;
         }
 
         /// <summary>
@@ -156,14 +165,14 @@ namespace BoggleSolverConsole.Bits
                 IsWord = IsWord,
                 Left = Left,
                 Right = Right,
-                Prefix = SliceBitArray(Prefix, splitIndex + 1, Prefix.Length - splitIndex - 1)
+                Prefix = Prefix.Slice(splitIndex + 1, Prefix.Length - splitIndex - 1)
             };
 
             // Determine which branch the original prefix continues on
             bool originalBit = Prefix[splitIndex];
 
             // Truncate this node's prefix
-            Prefix = SliceBitArray(Prefix, 0, splitIndex);
+            Prefix = Prefix.Slice(0, splitIndex);
 
             // Reset this node - it becomes a branch point
             IsWord = false;
@@ -204,7 +213,7 @@ namespace BoggleSolverConsole.Bits
         }
 
         /// <summary>
-        /// Collapse single-child chains into prefix runs
+        /// Collapse single-child chains into prefix runs (respecting MaxLength limit)
         /// </summary>
         private void Collapse()
         {
@@ -213,41 +222,23 @@ namespace BoggleSolverConsole.Bits
             Right?.Collapse();
 
             // Now collapse this node's single-child chains
-            // Collect prefix bits while we have exactly one child and are not a word
-            var prefixBits = new List<bool>();
-
+            // Absorb children while we have exactly one child and are not a word
             while (!IsWord && (Left == null) != (Right == null))
             {
                 // Exactly one child
-                if (Left != null)
-                {
-                    prefixBits.Add(false); // 0
-                    var child = Left;
-                    // Absorb child's prefix
-                    for (int i = 0; i < child.Prefix.Length; i++)
-                        prefixBits.Add(child.Prefix[i]);
-                    // Move child's data up
-                    IsWord = child.IsWord;
-                    Left = child.Left;
-                    Right = child.Right;
-                }
-                else // Right != null
-                {
-                    prefixBits.Add(true); // 1
-                    var child = Right!;
-                    // Absorb child's prefix
-                    for (int i = 0; i < child.Prefix.Length; i++)
-                        prefixBits.Add(child.Prefix[i]);
-                    // Move child's data up
-                    IsWord = child.IsWord;
-                    Left = child.Left;
-                    Right = child.Right;
-                }
-            }
+                var child = Left ?? Right!;
+                bool branchBit = Left == null; // false=left, true=right
 
-            if (prefixBits.Count > 0)
-            {
-                Prefix = new BitArray(prefixBits.ToArray());
+                // Check if we can absorb: 1 (branch bit) + child prefix must fit
+                int newLength = Prefix.Length + 1 + child.Prefix.Length;
+                if (newLength > BitPrefix.MaxLength)
+                    break; // Can't absorb without exceeding limit
+
+                // Absorb child into this node
+                Prefix = Prefix.Append(branchBit).Append(child.Prefix);
+                IsWord = child.IsWord;
+                Left = child.Left;
+                Right = child.Right;
             }
         }
 
@@ -274,7 +265,7 @@ namespace BoggleSolverConsole.Bits
             writer.WriteBits(00, 2);
         }
 
-        private void WriteTo(BitWriter writer, BitArray prefix, int prefixOffset)
+        private void WriteTo(BitWriter writer, BitPrefix prefix, int prefixOffset)
         {
             int remaining = prefix.Length - prefixOffset;
 
@@ -351,11 +342,7 @@ namespace BoggleSolverConsole.Bits
         public static BinaryTrieNode ReadFrom(BitReader reader)
         {
             var node = new BinaryTrieNode();
-            var prefixBits = new List<bool>();
-
-            ReadInto(reader, node, prefixBits);
-
-            node.Prefix = new BitArray(prefixBits.ToArray());
+            node.Prefix = ReadInto(reader, node);
             return node;
         }
 
@@ -365,20 +352,20 @@ namespace BoggleSolverConsole.Bits
         private static BinaryTrieNode? TryReadChild(BitReader reader)
         {
             var node = new BinaryTrieNode();
-            var prefixBits = new List<bool>();
+            var prefix = ReadInto(reader, node);
 
-            if (ReadInto(reader, node, prefixBits))
+            if (prefix.Length >= 0 && (node.IsWord || node.HasChildren || prefix.Length > 0))
             {
-                node.Prefix = new BitArray(prefixBits.ToArray());
+                node.Prefix = prefix;
                 return node;
             }
-            return null; // Dead end
+            return null; // Dead end indicated by returning empty prefix with no word/children
         }
 
         /// <summary>
-        /// Read node data into target. Returns false if this is a dead end.
+        /// Read node data into target. Returns the prefix (empty for dead ends).
         /// </summary>
-        private static bool ReadInto(BitReader reader, BinaryTrieNode target, List<bool> prefixBits)
+        private static BitPrefix ReadInto(BitReader reader, BinaryTrieNode target)
         {
             bool isWord = reader.ReadBit();
             bool hasChildren = reader.ReadBit();
@@ -386,16 +373,17 @@ namespace BoggleSolverConsole.Bits
             // Dead end: IsWord=0, HasChildren=0, no prefix code
             if (!isWord && !hasChildren)
             {
-                return false;
+                return BitPrefix.Empty;
             }
 
             // Read prefix chunk
             uint lengthCode = reader.ReadBits(3);
             int chunkSize = ChunkSizes[lengthCode];
 
+            var prefix = BitPrefix.Empty;
             for (int i = 0; i < chunkSize; i++)
             {
-                prefixBits.Add(reader.ReadBit());
+                prefix = prefix.Append(reader.ReadBit());
             }
 
             if (hasChildren)
@@ -407,17 +395,29 @@ namespace BoggleSolverConsole.Bits
                 // Check if this is an intermediate node (one dead end = prefix bit)
                 if (!isWord && (left == null) != (right == null))
                 {
-                    // Add implicit branch bit to prefix
-                    prefixBits.Add(right != null); // left=0, right=1
-
-                    // Absorb the non-null child's prefix and data
+                    // This is a serialization intermediate node - try to absorb child
+                    bool branchBit = right != null; // left=0, right=1
                     var child = left ?? right!;
-                    for (int i = 0; i < child.Prefix.Length; i++)
-                        prefixBits.Add(child.Prefix[i]);
 
-                    target.IsWord = child.IsWord;
-                    target.Left = child.Left;
-                    target.Right = child.Right;
+                    // Check if we can absorb without exceeding MaxLength
+                    int newLength = prefix.Length + 1 + child.Prefix.Length;
+                    if (newLength <= BitPrefix.MaxLength)
+                    {
+                        // Absorb child completely
+                        prefix = prefix.Append(branchBit).Append(child.Prefix);
+                        target.IsWord = child.IsWord;
+                        target.Left = child.Left;
+                        target.Right = child.Right;
+                    }
+                    else
+                    {
+                        // Can't absorb - keep as separate node
+                        target.IsWord = false;
+                        if (branchBit)
+                            target.Right = child;
+                        else
+                            target.Left = child;
+                    }
                 }
                 else
                 {
@@ -433,7 +433,7 @@ namespace BoggleSolverConsole.Bits
                 target.IsWord = isWord;
             }
 
-            return true;
+            return prefix;
         }
 
         /// <summary>
