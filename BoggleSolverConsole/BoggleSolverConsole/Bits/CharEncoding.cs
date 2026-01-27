@@ -8,10 +8,10 @@ namespace BoggleSolverConsole.Bits
     public class CharEncoding
     {
         public Func<string, BitArray> StringToBits { get; }
-        public Func<List<bool>, string> BitsToString { get; }
+        public Func<BitArray, string> BitsToString { get; }
         public int BitsPerChar { get; }
 
-        private CharEncoding(int bitsPerChar, Func<string, BitArray> stringToBits, Func<List<bool>, string> bitsToString)
+        private CharEncoding(int bitsPerChar, Func<string, BitArray> stringToBits, Func<BitArray, string> bitsToString)
         {
             BitsPerChar = bitsPerChar;
             StringToBits = stringToBits;
@@ -25,33 +25,25 @@ namespace BoggleSolverConsole.Bits
             8,
             s =>
             {
-                var bits = new BitArray(s.Length * 8);
+                // Convert string to byte array, then construct BitArray directly
+                var bytes = new byte[s.Length];
                 for (int i = 0; i < s.Length; i++)
-                {
-                    byte c = (byte)s[i];
-                    for (int b = 0; b < 8; b++)
-                    {
-                        bits[i * 8 + b] = (c & (1 << b)) != 0;
-                    }
-                }
-                return bits;
+                    bytes[i] = (byte)s[i];
+                return new BitArray(bytes);
             },
             bits =>
             {
                 if (bits.Count % 8 != 0)
                     throw new InvalidOperationException("Bit count must be multiple of 8");
 
-                var chars = new char[bits.Count / 8];
-                for (int i = 0; i < chars.Length; i++)
-                {
-                    byte c = 0;
-                    for (int b = 0; b < 8; b++)
-                    {
-                        if (bits[i * 8 + b])
-                            c |= (byte)(1 << b);
-                    }
-                    chars[i] = (char)c;
-                }
+                // Extract bytes directly using CopyTo
+                var bytes = new byte[bits.Count / 8];
+                bits.CopyTo(bytes, 0);
+
+                // Convert bytes to string
+                var chars = new char[bytes.Length];
+                for (int i = 0; i < bytes.Length; i++)
+                    chars[i] = (char)bytes[i];
                 return new string(chars);
             }
         );
@@ -63,31 +55,43 @@ namespace BoggleSolverConsole.Bits
             5,
             s =>
             {
-                var bits = new BitArray(s.Length * 5);
+                int totalBits = s.Length * 5;
+                var ints = new int[(totalBits + 31) / 32];
+
                 for (int i = 0; i < s.Length; i++)
                 {
                     int value = CharTo5Bit(s[i]);
-                    for (int b = 0; b < 5; b++)
-                    {
-                        bits[i * 5 + b] = (value & (1 << b)) != 0;
-                    }
+                    int bitPos = i * 5;
+                    int intIndex = bitPos / 32;
+                    int bitOffset = bitPos % 32;
+
+                    ints[intIndex] |= value << bitOffset;
+                    if (bitOffset > 27) // Overflow into next int
+                        ints[intIndex + 1] |= value >> (32 - bitOffset);
                 }
-                return bits;
+
+                return new BitArray(ints) { Length = totalBits };
             },
             bits =>
             {
                 if (bits.Count % 5 != 0)
                     throw new InvalidOperationException("Bit count must be multiple of 5");
 
+                var ints = new int[(bits.Count + 31) / 32];
+                bits.CopyTo(ints, 0);
+
                 var chars = new char[bits.Count / 5];
                 for (int i = 0; i < chars.Length; i++)
                 {
-                    int value = 0;
-                    for (int b = 0; b < 5; b++)
-                    {
-                        if (bits[i * 5 + b])
-                            value |= 1 << b;
-                    }
+                    int bitPos = i * 5;
+                    int intIndex = bitPos / 32;
+                    int bitOffset = bitPos % 32;
+
+                    // Use uint to avoid sign-extension on right shift
+                    int value = (int)(((uint)ints[intIndex] >> bitOffset) & 0x1F);
+                    if (bitOffset > 27) // Spans two ints
+                        value |= (int)(((uint)ints[intIndex + 1] << (32 - bitOffset)) & 0x1F);
+
                     chars[i] = Char5BitToChar(value);
                 }
                 return new string(chars);

@@ -17,7 +17,7 @@ public class BitPrefixTests
     [Fact]
     public void FromBitArray_CopiesBitsCorrectly()
     {
-        var bits = new BitArray(new[] { true, false, true, true, false });
+        var bits = new BitArray([true, false, true, true, false]);
         var prefix = BitPrefix.FromBitArray(bits, 0, 5);
 
         Assert.Equal(5, prefix.Length);
@@ -31,7 +31,7 @@ public class BitPrefixTests
     [Fact]
     public void FromBitArray_WithOffset_CopiesCorrectSlice()
     {
-        var bits = new BitArray(new[] { true, false, true, true, false });
+        var bits = new BitArray([true, false, true, true, false]);
         var prefix = BitPrefix.FromBitArray(bits, 2, 3);
 
         Assert.Equal(3, prefix.Length);
@@ -43,7 +43,7 @@ public class BitPrefixTests
     [Fact]
     public void FromBitArray_ZeroLength_ReturnsEmpty()
     {
-        var bits = new BitArray(new[] { true, false, true });
+        var bits = new BitArray([true, false, true]);
         var prefix = BitPrefix.FromBitArray(bits, 1, 0);
 
         Assert.Equal(0, prefix.Length);
@@ -61,7 +61,7 @@ public class BitPrefixTests
     [Fact]
     public void Slice_ReturnsCorrectSubset()
     {
-        var bits = new BitArray(new[] { true, false, true, true, false });
+        var bits = new BitArray([true, false, true, true, false]);
         var prefix = BitPrefix.FromBitArray(bits, 0, 5);
 
         var slice = prefix.Slice(1, 3);
@@ -75,7 +75,7 @@ public class BitPrefixTests
     [Fact]
     public void Slice_FromStart_ReturnsPrefix()
     {
-        var bits = new BitArray(new[] { true, false, true, true, false });
+        var bits = new BitArray([true, false, true, true, false]);
         var prefix = BitPrefix.FromBitArray(bits, 0, 5);
 
         var slice = prefix.Slice(0, 3);
@@ -89,8 +89,7 @@ public class BitPrefixTests
     [Fact]
     public void Slice_ZeroLength_ReturnsEmpty()
     {
-        var bits = new BitArray(new[] { true, false, true });
-        var prefix = BitPrefix.FromBitArray(bits, 0, 3);
+        var prefix = BitPrefix.FromBools(true, false, true);
 
         var slice = prefix.Slice(1, 0);
 
@@ -100,8 +99,7 @@ public class BitPrefixTests
     [Fact]
     public void Slice_ExceedsBounds_Throws()
     {
-        var bits = new BitArray(new[] { true, false, true });
-        var prefix = BitPrefix.FromBitArray(bits, 0, 3);
+        var prefix = BitPrefix.FromBools([true, false, true]);
 
         Assert.Throws<ArgumentOutOfRangeException>(() => prefix.Slice(1, 3));
     }
@@ -132,12 +130,45 @@ public class BitPrefixTests
     }
 
     [Fact]
+    public void Append_MultipleBits_array_PreservesOrder()
+    {
+        var prefix = BitPrefix.Empty.Append([true, false, true, true]);
+        
+        Assert.Equal(4, prefix.Length);
+        Assert.True(prefix[0]);
+        Assert.False(prefix[1]);
+        Assert.True(prefix[2]);
+        Assert.True(prefix[3]);
+    }
+
+    [Fact]
+    public void Create_array_PreservesOrder()
+    {
+        var prefix = BitPrefix.FromBools(true, false, true, true);
+        
+        Assert.Equal(4, prefix.Length);
+        Assert.True(prefix[0]);
+        Assert.False(prefix[1]);
+        Assert.True(prefix[2]);
+        Assert.True(prefix[3]);
+    }
+
+    [Fact]
     public void Append_AtMaxLength_Throws()
     {
         var bits = new BitArray(BitPrefix.MaxLength);
         var prefix = BitPrefix.FromBitArray(bits, 0, BitPrefix.MaxLength);
 
         Assert.Throws<InvalidOperationException>(() => prefix.Append(true));
+    }
+
+    [Fact]
+    public void Append_array_AtMaxLength_Throws()
+    {
+        var bits = new BitArray(BitPrefix.MaxLength);
+        var prefix = BitPrefix.FromBitArray(bits, 0, BitPrefix.MaxLength);
+
+        Assert.Throws<InvalidOperationException>(() => prefix.Append([true]));
     }
 
     [Fact]
@@ -178,64 +209,9 @@ public class BitPrefixTests
     }
 
     [Fact]
-    public void MatchLength_FullMatch_ReturnsLength()
+    public void MaxLength_Is32()
     {
-        var prefix = BitPrefix.Empty.Append(true).Append(false).Append(true);
-        var bits = new BitArray(new[] { true, false, true, true, false });
-
-        int matchLen = prefix.MatchLength(bits, 0);
-
-        Assert.Equal(3, matchLen);
-    }
-
-    [Fact]
-    public void MatchLength_PartialMatch_ReturnsMatchedCount()
-    {
-        var prefix = BitPrefix.Empty.Append(true).Append(false).Append(true);
-        var bits = new BitArray(new[] { true, false, false, true });
-
-        int matchLen = prefix.MatchLength(bits, 0);
-
-        Assert.Equal(2, matchLen); // Diverges at index 2
-    }
-
-    [Fact]
-    public void MatchLength_NoMatch_ReturnsZero()
-    {
-        var prefix = BitPrefix.Empty.Append(true);
-        var bits = new BitArray(new[] { false, true, true });
-
-        int matchLen = prefix.MatchLength(bits, 0);
-
-        Assert.Equal(0, matchLen);
-    }
-
-    [Fact]
-    public void MatchLength_WithOffset_MatchesFromOffset()
-    {
-        var prefix = BitPrefix.Empty.Append(false).Append(true);
-        var bits = new BitArray(new[] { true, false, true, true });
-
-        int matchLen = prefix.MatchLength(bits, 1);
-
-        Assert.Equal(2, matchLen);
-    }
-
-    [Fact]
-    public void MatchLength_ArrayShorterThanPrefix_ReturnsArrayLength()
-    {
-        var prefix = BitPrefix.Empty.Append(true).Append(false).Append(true);
-        var bits = new BitArray(new[] { true, false });
-
-        int matchLen = prefix.MatchLength(bits, 0);
-
-        Assert.Equal(2, matchLen);
-    }
-
-    [Fact]
-    public void MaxLength_Is24()
-    {
-        Assert.Equal(24, BitPrefix.MaxLength);
+        Assert.Equal(32, BitPrefix.MaxLength);
     }
 
     [Fact]

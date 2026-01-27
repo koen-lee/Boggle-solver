@@ -34,6 +34,11 @@ namespace BoggleSolverConsole.Bits
             WriteBits(value ? 1u : 0u, 1);
         }
 
+        public void WritePrefix(BitPrefix prefix)
+        {
+            WriteBits(prefix.Bits, prefix.Length);
+        }
+
         public void Flush()
         {
             if (_bitsInBuffer > 0)

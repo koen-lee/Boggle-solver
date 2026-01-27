@@ -37,5 +37,10 @@ namespace BoggleSolverConsole.Bits
         {
             return ReadBits(1) == 1;
         }
+
+        public BitPrefix ReadPrefix(int bitCount)
+        {
+            return BitPrefix.FromBits(ReadBits(bitCount), bitCount);
+        }
     }
 }

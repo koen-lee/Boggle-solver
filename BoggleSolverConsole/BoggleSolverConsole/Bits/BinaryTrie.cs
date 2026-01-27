@@ -291,10 +291,7 @@ namespace BoggleSolverConsole.Bits
                 writer.WriteBits((uint)chunkCode, 3);
 
                 // Write chunk bits
-                for (int i = 0; i < chunkSize; i++)
-                {
-                    writer.WriteBit(prefix[prefixOffset + i]);
-                }
+                writer.WritePrefix(prefix.Slice(prefixOffset, chunkSize));
 
                 // Next bit determines left (0) or right (1)
                 // Always write both children - one is dead end, one continues
@@ -318,10 +315,7 @@ namespace BoggleSolverConsole.Bits
                 writer.WriteBits((uint)chunkCode, 3);
 
                 // Write chunk bits
-                for (int i = 0; i < chunkSize; i++)
-                {
-                    writer.WriteBit(prefix[prefixOffset + i]);
-                }
+                writer.WritePrefix(prefix.Slice(prefixOffset, chunkSize));
 
                 // Always write both children (dead end if null)
                 if (HasChildren)
@@ -379,12 +373,7 @@ namespace BoggleSolverConsole.Bits
             // Read prefix chunk
             uint lengthCode = reader.ReadBits(3);
             int chunkSize = ChunkSizes[lengthCode];
-
-            var prefix = BitPrefix.Empty;
-            for (int i = 0; i < chunkSize; i++)
-            {
-                prefix = prefix.Append(reader.ReadBit());
-            }
+            var prefix = reader.ReadPrefix(chunkSize);
 
             if (hasChildren)
             {
@@ -500,7 +489,7 @@ namespace BoggleSolverConsole.Bits
             // If this is a word, convert bits to string and yield
             if (IsWord)
             {
-                yield return encoding.BitsToString(bits);
+                yield return encoding.BitsToString(new BitArray(bits.ToArray()));
             }
 
             // Recurse to children

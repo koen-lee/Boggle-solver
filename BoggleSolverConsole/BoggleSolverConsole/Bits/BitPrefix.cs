@@ -1,25 +1,39 @@
 using System.Collections;
-using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace BoggleSolverConsole.Bits;
 
 /// <summary>
-/// A compact bit sequence stored in a uint (max 24 bits).
+/// A compact immutable struct bit sequence stored in a uint (max 32 bits).
 /// Replaces BitArray for prefix storage, avoiding heap allocation.
 /// Bits are stored LSB-first: index 0 is at bit 0, index 1 at bit 1, etc.
 /// This matches the natural byte ordering used by BitArray and UTF-8.
 /// </summary>
 public readonly struct BitPrefix
 {
-    public const int MaxLength = 24;
+    public const int MaxLength = 32;
 
     private readonly uint _bits;
     private readonly byte _length;
 
     public int Length => _length;
+    public uint Bits => _bits;
 
     public static BitPrefix Empty => default;
+
+    public static BitPrefix FromBools(params bool[] bits)
+    {
+        return Empty.Append(bits);
+    }
+
+    public static BitPrefix FromBits(uint bits, int length)
+    {
+        if (length > MaxLength)
+            throw new ArgumentOutOfRangeException(nameof(length), $"Length {length} exceeds max {MaxLength}");
+        // Mask off any bits beyond length
+        uint mask = length == 32 ? uint.MaxValue : (1u << length) - 1;
+        return new BitPrefix(bits & mask, (byte)length);
+    }
 
     /// <summary>
     /// Get bit at specified index (0 = LSB).
@@ -85,6 +99,24 @@ public readonly struct BitPrefix
     }
 
     /// <summary>
+    /// Append bits and return the new prefix.
+    /// First appends bitsToAppend[0], then bitsToAppend[1], etc.
+    /// </summary>
+    public BitPrefix Append(params bool[] bitsToAppend)
+    {
+        if (_length + bitsToAppend.Length > MaxLength)
+            throw new InvalidOperationException($"Cannot append to prefix at max length {MaxLength}");
+
+        uint bits = _bits;
+        for (int i = 0; i < bitsToAppend.Length; i++)
+        {
+            if (bitsToAppend[i])
+                bits |= 1u << (_length + i);
+        }
+        return new BitPrefix(bits, (byte)(_length + bitsToAppend.Length));
+    }
+
+    /// <summary>
     /// Append another BitPrefix and return the combined prefix.
     /// </summary>
     public BitPrefix Append(BitPrefix other)
@@ -96,32 +128,5 @@ public readonly struct BitPrefix
         // Shift other's bits left to position after our bits
         uint bits = _bits | (other._bits << _length);
         return new BitPrefix(bits, (byte)newLength);
-    }
-
-    /// <summary>
-    /// Check if the bits starting at index match a BitArray starting at arrayIndex.
-    /// Returns the number of bits that match before a mismatch, or the full length if all match.
-    /// </summary>
-    public int MatchLength(BitArray array, int arrayIndex)
-    {
-        int maxMatch = Math.Min(_length, array.Length - arrayIndex);
-        if (maxMatch == 0)
-            return 0;
-
-        // Extract bits from array into uint, LSB-first aligned like our storage
-        uint arrayBits = 0;
-        for (int i = 0; i < maxMatch; i++)
-        {
-            if (array[arrayIndex + i])
-                arrayBits |= 1u << i;
-        }
-
-        // XOR finds differing bits, TrailingZeroCount finds first difference position
-        uint diff = _bits ^ arrayBits;
-        if (diff == 0)
-            return maxMatch; // All bits match within maxMatch range
-
-        int firstDiff = BitOperations.TrailingZeroCount(diff);
-        return Math.Min(firstDiff, maxMatch);
     }
 }
