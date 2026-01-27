@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace BoggleSolverConsole.Bits;
@@ -6,7 +7,8 @@ namespace BoggleSolverConsole.Bits;
 /// <summary>
 /// A compact bit sequence stored in a uint (max 24 bits).
 /// Replaces BitArray for prefix storage, avoiding heap allocation.
-/// Bits are stored MSB-first: index 0 is at bit 31, index 1 at bit 30, etc.
+/// Bits are stored LSB-first: index 0 is at bit 0, index 1 at bit 1, etc.
+/// This matches the natural byte ordering used by BitArray and UTF-8.
 /// </summary>
 public readonly struct BitPrefix
 {
@@ -20,12 +22,12 @@ public readonly struct BitPrefix
     public static BitPrefix Empty => default;
 
     /// <summary>
-    /// Get bit at specified index (0 = MSB).
+    /// Get bit at specified index (0 = LSB).
     /// </summary>
     public bool this[int index]
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => (_bits & (0x80000000u >> index)) != 0;
+        get => (_bits & (1u << index)) != 0;
     }
 
     private BitPrefix(uint bits, byte length)
@@ -48,7 +50,7 @@ public readonly struct BitPrefix
         for (int i = 0; i < length; i++)
         {
             if (source[start + i])
-                bits |= 0x80000000u >> i;
+                bits |= 1u << i;
         }
         return new BitPrefix(bits, (byte)length);
     }
@@ -62,8 +64,9 @@ public readonly struct BitPrefix
             return Empty;
         if (start + length > _length)
             throw new ArgumentOutOfRangeException(nameof(length), $"Slice [{start}..{start + length}) exceeds source length {_length}");
-        // Shift left to remove bits before start, keeping MSB alignment
-        uint bits = _bits << start;
+
+        // Shift right to remove bits before start, mask to keep only length bits
+        uint bits = (_bits >> start) & ((1u << length) - 1);
         return new BitPrefix(bits, (byte)length);
     }
 
@@ -77,7 +80,7 @@ public readonly struct BitPrefix
 
         uint bits = _bits;
         if (bit)
-            bits |= 0x80000000u >> _length;
+            bits |= 1u << _length;
         return new BitPrefix(bits, (byte)(_length + 1));
     }
 
@@ -90,8 +93,8 @@ public readonly struct BitPrefix
         if (newLength > MaxLength)
             throw new InvalidOperationException($"Combined length {newLength} exceeds max {MaxLength}");
 
-        // Shift other's bits right to position after our bits
-        uint bits = _bits | (other._bits >> _length);
+        // Shift other's bits left to position after our bits
+        uint bits = _bits | (other._bits << _length);
         return new BitPrefix(bits, (byte)newLength);
     }
 
@@ -102,11 +105,23 @@ public readonly struct BitPrefix
     public int MatchLength(BitArray array, int arrayIndex)
     {
         int maxMatch = Math.Min(_length, array.Length - arrayIndex);
+        if (maxMatch == 0)
+            return 0;
+
+        // Extract bits from array into uint, LSB-first aligned like our storage
+        uint arrayBits = 0;
         for (int i = 0; i < maxMatch; i++)
         {
-            if (this[i] != array[arrayIndex + i])
-                return i;
+            if (array[arrayIndex + i])
+                arrayBits |= 1u << i;
         }
-        return maxMatch;
+
+        // XOR finds differing bits, TrailingZeroCount finds first difference position
+        uint diff = _bits ^ arrayBits;
+        if (diff == 0)
+            return maxMatch; // All bits match within maxMatch range
+
+        int firstDiff = BitOperations.TrailingZeroCount(diff);
+        return Math.Min(firstDiff, maxMatch);
     }
 }
