@@ -155,34 +155,15 @@ namespace BoggleSolverConsole.Bits
             {
                 IsWord = IsWord,
                 Left = Left,
-                Right = Right
+                Right = Right,
+                Prefix = SliceBitArray(Prefix, splitIndex + 1, Prefix.Length - splitIndex - 1)
             };
-
-            // Set child's prefix to remaining bits after split
-            int remainingLength = Prefix.Length - splitIndex - 1;
-            if (remainingLength > 0)
-            {
-                var remainingPrefix = new bool[remainingLength];
-                for (int i = 0; i < remainingLength; i++)
-                    remainingPrefix[i] = Prefix[splitIndex + 1 + i];
-                child.Prefix = new BitArray(remainingPrefix);
-            }
 
             // Determine which branch the original prefix continues on
             bool originalBit = Prefix[splitIndex];
 
             // Truncate this node's prefix
-            if (splitIndex > 0)
-            {
-                var truncatedPrefix = new bool[splitIndex];
-                for (int i = 0; i < splitIndex; i++)
-                    truncatedPrefix[i] = Prefix[i];
-                Prefix = new BitArray(truncatedPrefix);
-            }
-            else
-            {
-                Prefix = new BitArray(0);
-            }
+            Prefix = SliceBitArray(Prefix, 0, splitIndex);
 
             // Reset this node - it becomes a branch point
             IsWord = false;
@@ -207,13 +188,17 @@ namespace BoggleSolverConsole.Bits
                 bool newBit = newBits[newBitIndex];
                 if (newBit)
                 {
-                    Right ??= new BinaryTrieNode();
-                    Right.Insert(newBits, newBitIndex + 1);
+                    if (Right == null)
+                        Right = CreateLeafWithPrefix(newBits, newBitIndex + 1);
+                    else
+                        Right.Insert(newBits, newBitIndex + 1);
                 }
                 else
                 {
-                    Left ??= new BinaryTrieNode();
-                    Left.Insert(newBits, newBitIndex + 1);
+                    if (Left == null)
+                        Left = CreateLeafWithPrefix(newBits, newBitIndex + 1);
+                    else
+                        Left.Insert(newBits, newBitIndex + 1);
                 }
             }
         }
