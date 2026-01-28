@@ -119,4 +119,28 @@ public ref struct BitArrayWriter
             WriteBits(chunk, remaining);
         }
     }
+    
+    /// <summary>
+    /// Write bits from a BitString.
+    /// </summary>
+    public void WriteBitString(ref ReadOnlyBitString bits)
+    {
+        // Write in 32-bit chunks for efficiency
+        int remaining = bits.Length;
+        int sourceOffset = 0;
+
+        while (remaining >= 32)
+        {
+            uint chunk = bits.ToBitPrefix(sourceOffset, 32).Bits;
+            WriteBits(chunk, 32);
+            sourceOffset += 32;
+            remaining -= 32;
+        }
+
+        if (remaining > 0)
+        {
+            uint chunk = bits.ToBitPrefix(sourceOffset, remaining).Bits;
+            WriteBits(chunk, remaining);
+        }
+    }
 }

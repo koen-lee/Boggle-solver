@@ -179,7 +179,7 @@ public readonly struct FlatTrieNode
     public static int CalculateNodeSize(bool hasValue, bool hasChildren, int prefixLength, int childrenSize = 0)
     {
         if (!hasValue && !hasChildren)
-            return 2; // Dead end
+            return DeadEndSize; // Dead end
 
         // Size field itself - we need to calculate this iteratively
         // since the size field's encoding depends on the total size

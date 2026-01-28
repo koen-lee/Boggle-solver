@@ -120,4 +120,11 @@ public ref struct BitArrayReader
         int bitInUint = _bitPosition % 32;
         return (_backing[uintIndex] & (1u << bitInUint)) != 0;
     }
+
+    public ReadOnlyBitString ReadBitString(int length)
+    {
+        ReadOnlyBitString result = ReadOnlyBitString.Wrap(_backing);
+        result = result.Slice(_bitPosition, length);
+        return result;
+    }
 }

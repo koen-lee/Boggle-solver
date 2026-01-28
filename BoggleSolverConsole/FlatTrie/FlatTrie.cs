@@ -149,7 +149,7 @@ public class FlatTrie : ITrie
     /// Read a trie node header: HasValue, HasChildren, and whether it's a dead end.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static (bool hasValue, bool hasChildren, bool isDeadEnd) ReadNodeHeader(ref BitArrayReader reader)
+    public static (bool hasValue, bool hasChildren, bool isDeadEnd) ReadNodeHeader(ref BitArrayReader reader)
     {
         var header = reader.ReadBits(2);
         bool hasValue = (header & 1u) != 0;
@@ -398,7 +398,7 @@ public class FlatTrie : ITrie
     {
         // Read current node completely first
         var reader = new BitArrayReader(_buffer, nodeBitPos);
-        var (oldHasValue, oldHasChildren, oldIsDeadEnd) = ReadNodeHeader(ref reader);
+        var (oldHasValue, oldHasChildren, _) = ReadNodeHeader(ref reader);
         int oldSize = VarInt.Read(ref reader);
         int oldPrefixLength = VarInt.Read(ref reader);
 
@@ -436,7 +436,6 @@ public class FlatTrie : ITrie
         // The diverging bits
         var oldPrefixReader = new BitArrayReader(oldPrefixBits, matchedBits);
         bool oldDivergeBit = oldPrefixReader.ReadBit();
-        _ = keyBits[keyBitIndex + matchedBits];
 
         // Old node's remaining prefix (after the diverge bit)
         int oldRemainingPrefixLen = oldPrefixLength - matchedBits - 1;
@@ -996,7 +995,7 @@ public class FlatTrie : ITrie
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
-         var (_, _, isDeadEnd) = ReadNodeHeader(ref reader);
+        var (_, _, isDeadEnd) = ReadNodeHeader(ref reader);
 
         if (isDeadEnd)
             return FlatTrieNode.DeadEndSize; // Dead end
@@ -1165,11 +1164,10 @@ public class FlatTrie : ITrie
                 reader.Skip(64);
 
             int leftChildPos = reader.BitPosition;
-            bool leftHasValue = reader.ReadBit();
-            bool leftHasChildren = reader.ReadBit();
+            (_, _, var leftIsDeadEnd) = ReadNodeHeader(ref reader);
 
             int rightChildPos;
-            if (!leftHasValue && !leftHasChildren)
+            if (leftIsDeadEnd)
             {
                 rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
             }
