@@ -461,7 +461,7 @@ public class BinaryTrieTests
         }
         int moreThan64 = histogram.Where(kvp => kvp.Key > 64).Sum(kvp => kvp.Value);
         _output.WriteLine($" > 64 bits: {moreThan64,6} nodes");
-/**/
+        /**/
         // Serialize with timing
         sw.Restart();
         using var ms = new MemoryStream();

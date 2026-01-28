@@ -4,7 +4,7 @@ namespace BoggleSolverConsole
 {
     class Program
     {
-        static void xxMain(string[] args)
+        static void Main(string[] args)
         {
 
             var field = GenerateField(8, 8);

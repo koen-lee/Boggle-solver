@@ -4,7 +4,7 @@ namespace BoggleSolverConsole
 {
     class ProgramSerialize
     {
-        static void Main(string[] args)
+        static void xMain(string[] args)
         {
             var filename = "woorden.txt";
             Console.WriteLine("Reading {0}", filename);

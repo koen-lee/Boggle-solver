@@ -3,7 +3,7 @@
     class BoggleUtilities
     {
         /// <summary>
-        /// takes about 4 seconds on this puny laptop for 500.000 words
+        /// takes about 0.6 seconds on this puny laptop for 500.000 words
         /// </summary>
         /// <param name="words"></param>
         /// <returns></returns>

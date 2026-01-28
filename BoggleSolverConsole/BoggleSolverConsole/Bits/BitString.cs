@@ -125,15 +125,7 @@ public readonly struct BitString
     /// </summary>
     public BitString Slice(int start)
     {
-        return Slice(start, _bitLength - start);
-    }
-
-    /// <summary>
-    /// Extract entire BitString as BitPrefix. Must be &lt;= 32 bits.
-    /// </summary>
-    public BitPrefix ToBitPrefix()
-    {
-        return ToBitPrefix(0, _bitLength);
+        return this[start.._bitLength];
     }
 
     /// <summary>
@@ -166,8 +158,6 @@ public readonly struct BitString
             result |= _backing[uintIndex + 1] << (32 - bitInUint);
         }
 
-        // Mask to keep only 'length' bits
-        uint mask = length == 32 ? uint.MaxValue : (1u << length) - 1;
-        return BitPrefix.FromBits(result & mask, length);
+        return BitPrefix.FromBits(result, length);
     }
 }

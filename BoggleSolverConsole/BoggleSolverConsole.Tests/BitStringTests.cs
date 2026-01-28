@@ -113,7 +113,7 @@ public class BitStringTests
     public void ToBitPrefix_EntireBitString_Works()
     {
         var bits = BitString.FromBytes([0xAB]);
-        var prefix = bits.ToBitPrefix();
+        var prefix = bits.ToBitPrefix(0, bits.Length);
 
         Assert.Equal(8, prefix.Length);
         Assert.Equal(0xABu, prefix.Bits);
@@ -139,7 +139,7 @@ public class BitStringTests
     {
         var bits = BitString.FromBytes([0x00, 0xFF]);
         var slice = bits.Slice(8, 8);
-        var prefix = slice.ToBitPrefix();
+        var prefix = slice.ToBitPrefix(0, slice.Length);
 
         Assert.Equal(8, prefix.Length);
         Assert.Equal(0xFFu, prefix.Bits);
