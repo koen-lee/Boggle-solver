@@ -1,7 +1,7 @@
 using System.Collections;
 using System.Runtime.CompilerServices;
 
-namespace BoggleSolverConsole.Bits;
+namespace BitUtilities;
 
 /// <summary>
 /// A compact immutable struct bit sequence stored in a uint (max 32 bits).

@@ -1,3 +1,5 @@
+using BitUtilities;
+
 namespace BoggleSolverConsole.Bits
 {
 

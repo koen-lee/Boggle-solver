@@ -1,7 +1,7 @@
-using BoggleSolverConsole.Bits;
+using BitUtilities;
 using Xunit;
 
-namespace BoggleSolverConsole.Tests;
+namespace BitUtilities.Tests;
 
 public class BitStreamTests
 {

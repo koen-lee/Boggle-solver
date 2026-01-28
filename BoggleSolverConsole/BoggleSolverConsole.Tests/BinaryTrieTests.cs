@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using BitUtilities;
 using BoggleSolverConsole.Bits;
 using Xunit;
 using Xunit.Abstractions;

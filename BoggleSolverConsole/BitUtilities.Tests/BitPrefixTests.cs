@@ -1,8 +1,8 @@
 using System.Collections;
-using BoggleSolverConsole.Bits;
+using BitUtilities;
 using Xunit;
 
-namespace BoggleSolverConsole.Tests;
+namespace BitUtilities.Tests;
 
 public class BitPrefixTests
 {
@@ -133,7 +133,7 @@ public class BitPrefixTests
     public void Append_MultipleBits_array_PreservesOrder()
     {
         var prefix = BitPrefix.Empty.Append([true, false, true, true]);
-        
+
         Assert.Equal(4, prefix.Length);
         Assert.True(prefix[0]);
         Assert.False(prefix[1]);
@@ -145,7 +145,7 @@ public class BitPrefixTests
     public void Create_array_PreservesOrder()
     {
         var prefix = BitPrefix.FromBools(true, false, true, true);
-        
+
         Assert.Equal(4, prefix.Length);
         Assert.True(prefix[0]);
         Assert.False(prefix[1]);

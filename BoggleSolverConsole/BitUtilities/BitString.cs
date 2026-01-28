@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace BoggleSolverConsole.Bits;
+namespace BitUtilities;
 
 /// <summary>
 /// A readonly struct representing a view into a bit sequence.

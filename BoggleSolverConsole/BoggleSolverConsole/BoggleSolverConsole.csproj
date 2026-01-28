@@ -13,4 +13,8 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\BitUtilities\BitUtilities.csproj" />
+  </ItemGroup>
+
 </Project>
