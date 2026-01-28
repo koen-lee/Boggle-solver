@@ -20,30 +20,51 @@ namespace FlatTrie;
 ///     Left child (recursive) - if HasChildren
 ///     Right child (recursive) - if HasChildren
 /// </summary>
-public readonly struct FlatTrieNode
+public class FlatTrieNode
 {
-    public bool HasValue { get; init; }
-    public bool HasChildren { get; init; }
-    public int Size { get; init; }
-    public int PrefixLength { get; init; }
-    public BitPrefix Prefix { get; init; }
-    public long Value { get; init; }
+    private long value;
 
-    /// <summary>
-    /// Position in the buffer where this node starts.
-    /// </summary>
-    public int StartBitPosition { get; init; }
 
-    /// <summary>
-    /// Position in the buffer where the left child starts (if HasChildren).
-    /// </summary>
-    public int LeftChildBitPosition { get; init; }
+    public FlatTrieNode(uint[] backing, int startBitPosition)
+    {
+        Backing = backing;
 
+        InitialBitPosition = startBitPosition;
+        var reader = new BitArrayReader(Backing, InitialBitPosition);
+        HasValue = reader.ReadBit();
+        HasChildren = reader.ReadBit();
+        if (IsDeadEnd)
+        {
+            OriginalSize = 2;
+            PrefixLength = 0;
+            Value = 0;
+            return;
+        }
+        OriginalSize = VarInt.Read(ref reader);
+        PrefixLength = VarInt.Read(ref reader);
+    }
+
+    public bool HasValue { get; private set; }
+    public bool HasChildren { get; private set; }
+    public int OriginalSize { get; private set; }
+    public int PrefixLength { get; private set; }
+    public long Value
+    {
+        get => value; private set
+        {
+            this.value = value;
+            IsDirty = true; // but size doesn't change
+        }
+    }
+
+    public bool IsDirty { get; private set; } = false;
     /// <summary>
-    /// Position in the buffer where the right child starts (if HasChildren).
-    /// This is calculated by reading the left child's size.
+    /// Position in the buffer where this node starts on node creation.
+    /// May differ from the position when writing if a node before it is modified.
     /// </summary>
-    public int RightChildBitPosition { get; init; }
+    public required int InitialBitPosition { get; init; }
+
+    public required uint[] Backing { get; init; }
 
     public bool IsDeadEnd => !HasValue && !HasChildren;
 
@@ -55,109 +76,11 @@ public readonly struct FlatTrieNode
     private int CalculateHeaderBitCount()
     {
         int bits = 2; // Flags
-        bits += VarInt.GetEncodedBitCount(Size);
+        bits += VarInt.GetEncodedBitCount(OriginalSize);
         bits += VarInt.GetEncodedBitCount(PrefixLength);
         bits += PrefixLength;
         if (HasValue) bits += 64;
         return bits;
-    }
-
-    /// <summary>
-    /// Read a node from the buffer at the specified bit position.
-    /// </summary>
-    public static FlatTrieNode Read(ReadOnlySpan<uint> buffer, int bitPosition)
-    {
-        var reader = new BitArrayReader(buffer, bitPosition);
-        return Read(ref reader, bitPosition);
-    }
-
-    /// <summary>
-    /// Read a node from a reader.
-    /// </summary>
-    public static FlatTrieNode Read(ref BitArrayReader reader, int startBitPosition)
-    {
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
-
-        // Dead end
-        if (!hasValue && !hasChildren)
-        {
-            return new FlatTrieNode
-            {
-                HasValue = false,
-                HasChildren = false,
-                Size = 2,
-                PrefixLength = 0,
-                Prefix = BitPrefix.Empty,
-                Value = 0,
-                StartBitPosition = startBitPosition,
-                LeftChildBitPosition = 0,
-                RightChildBitPosition = 0
-            };
-        }
-
-        int size = VarInt.Read(ref reader);
-        int prefixLength = VarInt.Read(ref reader);
-
-        // Read prefix in chunks (BitPrefix max is 32 bits)
-        BitPrefix prefix = BitPrefix.Empty;
-        if (prefixLength > 0 && prefixLength <= 32)
-        {
-            prefix = reader.ReadPrefix(prefixLength);
-        }
-        else if (prefixLength > 32)
-        {
-            // For longer prefixes, we just skip them during node reading
-            // The actual prefix matching will be done separately
-            reader.Skip(prefixLength);
-        }
-
-        long value = 0;
-        if (hasValue)
-        {
-            // Read 64-bit value in two 32-bit chunks
-            uint low = reader.ReadBits(32);
-            uint high = reader.ReadBits(32);
-            value = (long)low | ((long)high << 32);
-        }
-
-        int leftChildPos = hasChildren ? reader.BitPosition : 0;
-        int rightChildPos = 0;
-
-        if (hasChildren)
-        {
-            // To get right child position, we need to read left child's size
-            // First, read the left child's flags
-            bool leftHasValue = reader.ReadBit();
-            bool leftHasChildren = reader.ReadBit();
-
-            if (!leftHasValue && !leftHasChildren)
-            {
-                // Left is dead end, 2 bits
-                rightChildPos = leftChildPos + 2;
-            }
-            else
-            {
-                // Read left child's size
-                int leftSize = VarInt.Read(ref reader);
-                // Seek back to left child start
-                reader.Seek(leftChildPos);
-                rightChildPos = leftChildPos + leftSize;
-            }
-        }
-
-        return new FlatTrieNode
-        {
-            HasValue = hasValue,
-            HasChildren = hasChildren,
-            Size = size,
-            PrefixLength = prefixLength,
-            Prefix = prefix,
-            Value = value,
-            StartBitPosition = startBitPosition,
-            LeftChildBitPosition = leftChildPos,
-            RightChildBitPosition = rightChildPos
-        };
     }
 
     /// <summary>
@@ -207,73 +130,39 @@ public readonly struct FlatTrieNode
     }
 
     /// <summary>
-    /// Write a node to the buffer.
+    /// Writes this node to the buffer.
     /// </summary>
-    public static void Write(ref BitArrayWriter writer, bool hasValue, bool hasChildren,
-        int size, ReadOnlySpan<uint> prefixBacking, int prefixOffset, int prefixLength, long value)
+    public void Write(ref BitArrayWriter writer)
     {
         // Flags
-        writer.WriteBit(hasValue);
-        writer.WriteBit(hasChildren);
+        writer.WriteBit(HasValue);
+        writer.WriteBit(HasChildren);
 
-        if (!hasValue && !hasChildren)
+        if (IsDeadEnd)
             return; // Dead end, done
 
         // Size
-        VarInt.Write(ref writer, size);
-
+        VarInt.Write(ref writer, OriginalSize);
         // Prefix length and bits
-        VarInt.Write(ref writer, prefixLength);
-        if (prefixLength > 0)
+        VarInt.Write(ref writer, PrefixLength);
+        if (PrefixLength > 0)
         {
             // Write prefix bits
-            var prefixReader = new BitArrayReader(prefixBacking, prefixOffset);
-            for (int i = 0; i < prefixLength; i++)
-            {
-                writer.WriteBit(prefixReader.ReadBit());
-            }
+            var prefix = ReadOnlyBitString.Wrap(Backing).Slice(InitialBitPosition + 2 + VarInt.GetEncodedBitCount(OriginalSize), PrefixLength);
+            writer.WriteBitString(ref prefix);
         }
 
         // Value
-        if (hasValue)
+        if (HasValue)
         {
-            writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-            writer.WriteBits((uint)(value >> 32), 32);
+            writer.WriteBits((uint)(Value & 0xFFFFFFFF), 32);
+            writer.WriteBits((uint)(Value >> 32), 32);
         }
-
-        // Children are written separately
-    }
-
-    /// <summary>
-    /// Write a node with a BitPrefix.
-    /// </summary>
-    public static void Write(ref BitArrayWriter writer, bool hasValue, bool hasChildren,
-        int size, BitPrefix prefix, long value)
-    {
-        // Flags
-        writer.WriteBit(hasValue);
-        writer.WriteBit(hasChildren);
-
-        if (!hasValue && !hasChildren)
-            return; // Dead end, done
-
-        // Size
-        VarInt.Write(ref writer, size);
-
-        // Prefix length and bits
-        VarInt.Write(ref writer, prefix.Length);
-        if (prefix.Length > 0)
-        {
-            writer.WritePrefix(prefix);
-        }
-
-        // Value
-        if (hasValue)
-        {
-            writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-            writer.WriteBits((uint)(value >> 32), 32);
-        }
-
-        // Children are written separately
+        /*
+                if( HasChildren )
+                {
+                    LeftChild.Write(ref writer);
+                    RightChild.Write(ref writer);
+                }*/
     }
 }
