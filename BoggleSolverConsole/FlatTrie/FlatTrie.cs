@@ -350,13 +350,11 @@ public class FlatTrie : ITrie
         int oldSize = VarInt.Read(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
-        // Read prefix
+        // Copy prefix to temporary buffer
+        var prefix = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
         var prefixBits = new uint[(prefixLength + 31) / 32];
         var prefixWriter = new BitArrayWriter(prefixBits);
-        for (int i = 0; i < prefixLength; i++)
-        {
-            prefixWriter.WriteBit(reader.ReadBit());
-        }
+        prefixWriter.WriteBitString(ref prefix);
 
         // Calculate new size (adding 64 bits for value)
         int childrenSize = hasChildren ? (oldSize - (reader.BitPosition - nodeBitPos)) : 0;
@@ -376,11 +374,8 @@ public class FlatTrie : ITrie
         VarInt.Write(ref writer, prefixLength);
 
         // Write prefix
-        var prefixReader = new BitArrayReader(prefixBits);
-        for (int i = 0; i < prefixLength; i++)
-        {
-            writer.WriteBit(prefixReader.ReadBit());
-        }
+        prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
+        writer.WriteBitString(ref prefix);
 
         // Write value
         writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
