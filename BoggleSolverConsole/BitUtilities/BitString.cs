@@ -18,6 +18,30 @@ public readonly struct BitString
 
     public static BitString Empty => default;
 
+    /// <summary>
+    /// Wrap an existing uint[] array without copying.
+    /// The BitString will view all bits from offset 0 to bitLength.
+    /// </summary>
+    public static BitString Wrap(uint[] backing, int bitLength)
+    {
+        if (backing == null || bitLength == 0)
+            return Empty;
+        if (bitLength > backing.Length * 32)
+            throw new ArgumentOutOfRangeException(nameof(bitLength),
+                $"Bit length {bitLength} exceeds backing capacity {backing.Length * 32}");
+        return new BitString(backing, 0, bitLength);
+    }
+
+    /// <summary>
+    /// Wrap an existing uint[] array without copying, using full capacity.
+    /// </summary>
+    public static BitString Wrap(uint[] backing)
+    {
+        if (backing == null || backing.Length == 0)
+            return Empty;
+        return new BitString(backing, 0, backing.Length * 32);
+    }
+
     private BitString(uint[] backing, int bitOffset, int bitLength)
     {
         _backing = backing;
