@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using BitUtilities;
 
@@ -50,14 +51,6 @@ public class FlatTrie : ITrie
         byte[] keyBytes = Encoding.UTF8.GetBytes(key);
         var keyBits = BitString.FromBytes(keyBytes);
 
-        // Check if trie is empty (root is dead end)
-        var reader = new BitArrayReader(_buffer);
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
-
-        if (!hasValue && !hasChildren)
-            return false; // Empty trie
-
         return TryReadInternal(keyBits, 0, 0, out value);
     }
 
@@ -66,15 +59,13 @@ public class FlatTrie : ITrie
         value = 0;
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
+        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
 
-        // Dead end
-        if (!hasValue && !hasChildren)
+        if (isDeadEnd)
             return false;
 
         // Read node header
-        int size = VarInt.Read(ref reader);
+        _ = VarInt.Read(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         // Match prefix bits against key bits
@@ -127,26 +118,24 @@ public class FlatTrie : ITrie
 
         // Read left child info to determine positions
         int leftChildPos = reader.BitPosition;
-        bool leftHasValue = reader.ReadBit();
-        bool leftHasChildren = reader.ReadBit();
+        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
 
         int rightChildPos;
-        if (!leftHasValue && !leftHasChildren)
+        if (leftIsDeadEnd)
         {
-            // Left is dead end
             rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
         }
         else
         {
-            int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
+            int leftSize = ReadNodeSize(leftChildPos);
             rightChildPos = leftChildPos + leftSize;
         }
 
         if (nextBit == false)
         {
             // Go left
-            if (!leftHasValue && !leftHasChildren)
-                return false; // Dead end
+            if (leftIsDeadEnd)
+                return false;
             return TryReadInternal(keyBits, keyBitIndex, leftChildPos, out value);
         }
         else
@@ -154,6 +143,19 @@ public class FlatTrie : ITrie
             // Go right
             return TryReadInternal(keyBits, keyBitIndex, rightChildPos, out value);
         }
+    }
+
+    /// <summary>
+    /// Read a trie node header: HasValue, HasChildren, and whether it's a dead end.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static (bool hasValue, bool hasChildren, bool isDeadEnd) ReadNodeHeader(ref BitArrayReader reader)
+    {
+        var header = reader.ReadBits(2);
+        bool hasValue = (header & 1u) != 0;
+        bool hasChildren = (header & 2u) != 0;
+        bool isDeadEnd = header == 0;
+        return (hasValue, hasChildren, isDeadEnd);
     }
 
     public bool TryWrite(string key, long value)
@@ -169,10 +171,9 @@ public class FlatTrie : ITrie
 
         // Check if trie is empty
         var reader = new BitArrayReader(_buffer);
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
+        var (_, _, isDeadEnd) = ReadNodeHeader(ref reader);
 
-        if (!hasValue && !hasChildren)
+        if (isDeadEnd)
         {
             // Empty trie - create root node with this key
             return WriteNewRoot(keyBits, value);
@@ -211,14 +212,12 @@ public class FlatTrie : ITrie
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
+        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
 
         // Dead end - this shouldn't happen if called correctly
-        if (!hasValue && !hasChildren)
+        if (isDeadEnd)
             return false;
-
-        int size = VarInt.Read(ref reader);
+        _ = VarInt.Read(ref reader);
         int prefixLength = VarInt.Read(ref reader);
         int prefixStartPos = reader.BitPosition;
 
@@ -246,8 +245,14 @@ public class FlatTrie : ITrie
         {
             if (matchedBits == prefixLength)
             {
+                if (!hasValue)
+                {
+                    // Need to expand the node to include a value
+                    // This requires shifting and is complex
+                    return RewriteNodeWithValue(nodeBitPos, value, ancestors);
+                }
                 // Exact match - update value
-                return UpdateNodeValue(nodeBitPos, value, !hasValue, ancestors);
+                return UpdateNodeValue(nodeBitPos, value);
             }
             else
             {
@@ -280,26 +285,24 @@ public class FlatTrie : ITrie
         keyBitIndex++;
 
         int leftChildPos = reader.BitPosition;
-        bool leftHasValue = reader.ReadBit();
-        bool leftHasChildren = reader.ReadBit();
+        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
 
         int rightChildPos;
-        if (!leftHasValue && !leftHasChildren)
+        if (leftIsDeadEnd)
         {
             rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
         }
         else
         {
-            int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
+            int leftSize = ReadNodeSize(leftChildPos);
             rightChildPos = leftChildPos + leftSize;
         }
 
         if (nextBit == false)
         {
             // Go left
-            if (!leftHasValue && !leftHasChildren)
+            if (leftIsDeadEnd)
             {
-                // Left is dead end - replace with new node
                 return ReplaceDeadEnd(leftChildPos, keyBits, keyBitIndex, value, ancestors);
             }
             return TryWriteInternal(keyBits, keyBitIndex, leftChildPos, value, ancestors);
@@ -308,26 +311,19 @@ public class FlatTrie : ITrie
         {
             // Go right
             reader.Seek(rightChildPos);
-            bool rightHasValue = reader.ReadBit();
-            bool rightHasChildren = reader.ReadBit();
+            (_, _, bool rightIsDeadEnd) = ReadNodeHeader(ref reader);
 
-            if (!rightHasValue && !rightHasChildren)
+            if (rightIsDeadEnd)
             {
-                // Right is dead end - replace with new node
                 return ReplaceDeadEnd(rightChildPos, keyBits, keyBitIndex, value, ancestors);
             }
             return TryWriteInternal(keyBits, keyBitIndex, rightChildPos, value, ancestors);
         }
     }
 
-    private bool UpdateNodeValue(int nodeBitPos, long value, bool needToAddValue, List<int> ancestors)
+    private bool UpdateNodeValue(int nodeBitPos, long value)
     {
-        if (needToAddValue)
-        {
-            // Need to expand the node to include a value
-            // This requires shifting and is complex
-            return RewriteNodeWithValue(nodeBitPos, value, ancestors);
-        }
+
 
         // Just update existing value in place
         var reader = new BitArrayReader(_buffer, nodeBitPos);
@@ -349,8 +345,8 @@ public class FlatTrie : ITrie
     {
         // Read current node
         var reader = new BitArrayReader(_buffer, nodeBitPos);
-        reader.ReadBit(); // HasValue (false)
-        bool hasChildren = reader.ReadBit();
+
+        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
         int oldSize = VarInt.Read(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
@@ -402,8 +398,7 @@ public class FlatTrie : ITrie
     {
         // Read current node completely first
         var reader = new BitArrayReader(_buffer, nodeBitPos);
-        bool oldHasValue = reader.ReadBit();
-        bool oldHasChildren = reader.ReadBit();
+        var (oldHasValue, oldHasChildren, oldIsDeadEnd) = ReadNodeHeader(ref reader);
         int oldSize = VarInt.Read(ref reader);
         int oldPrefixLength = VarInt.Read(ref reader);
 
@@ -441,7 +436,7 @@ public class FlatTrie : ITrie
         // The diverging bits
         var oldPrefixReader = new BitArrayReader(oldPrefixBits, matchedBits);
         bool oldDivergeBit = oldPrefixReader.ReadBit();
-        bool newDivergeBit = keyBits[keyBitIndex + matchedBits];
+        _ = keyBits[keyBitIndex + matchedBits];
 
         // Old node's remaining prefix (after the diverge bit)
         int oldRemainingPrefixLen = oldPrefixLength - matchedBits - 1;
@@ -1000,10 +995,10 @@ public class FlatTrie : ITrie
     private int ReadNodeSize(int nodeBitPos)
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
 
-        if (!hasValue && !hasChildren)
+         var (_, _, isDeadEnd) = ReadNodeHeader(ref reader);
+
+        if (isDeadEnd)
             return FlatTrieNode.DeadEndSize; // Dead end
 
         return VarInt.Read(ref reader);
@@ -1025,13 +1020,10 @@ public class FlatTrie : ITrie
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
-
-        if (!hasValue && !hasChildren)
+        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
+        if (isDeadEnd)
             return false; // Dead end
-
-        int size = VarInt.Read(ref reader);
+        _ = VarInt.Read(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         // Match prefix
@@ -1071,11 +1063,11 @@ public class FlatTrie : ITrie
         keyBitIndex++;
 
         int leftChildPos = reader.BitPosition;
-        bool leftHasValue = reader.ReadBit();
-        bool leftHasChildren = reader.ReadBit();
+
+        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
 
         int rightChildPos;
-        if (!leftHasValue && !leftHasChildren)
+        if (leftIsDeadEnd)
         {
             rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
         }
@@ -1143,18 +1135,16 @@ public class FlatTrie : ITrie
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
+        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
 
-        if (!hasValue && !hasChildren)
+        if (isDeadEnd)
         {
             stats.DeadEndCount++;
             return;
         }
 
         stats.NodeCount++;
-
-        int size = VarInt.Read(ref reader);
+        _ = VarInt.Read(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         stats.TotalPrefixBits += prefixLength;

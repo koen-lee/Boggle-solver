@@ -77,32 +77,6 @@ public static class VarInt
     }
 
     /// <summary>
-    /// Peek at a variable-length integer without advancing the reader.
-    /// Returns the value and how many bits it occupies.
-    /// </summary>
-    public static (int value, int bitCount) Peek(ref BitArrayReader reader)
-    {
-        int startPos = reader.BitPosition;
-        int value = Read(ref reader);
-        int bitCount = reader.BitPosition - startPos;
-        reader.Seek(startPos);
-        return (value, bitCount);
-    }
-
-    /// <summary>
-    /// Write a stale marker (0) while preserving the encoding class.
-    /// This keeps the same bit width so layout isn't affected.
-    /// </summary>
-    public static void WriteStale(ref BitArrayWriter writer, int currentEncodingClass)
-    {
-        writer.WriteBits((uint)currentEncodingClass, 2);
-        if (currentEncodingClass > 0)
-        {
-            writer.WriteBits(0, BitWidths[currentEncodingClass]);
-        }
-    }
-
-    /// <summary>
     /// Write a value using a specific encoding class (for in-place updates).
     /// </summary>
     public static void WriteWithClass(ref BitArrayWriter writer, int value, int encodingClass)
