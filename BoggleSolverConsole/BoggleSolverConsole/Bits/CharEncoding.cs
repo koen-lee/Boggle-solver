@@ -7,11 +7,9 @@ namespace BoggleSolverConsole.Bits
     {
         public Func<string, BitString> StringToBits { get; }
         public Func<BitString, string> BitsToString { get; }
-        public int BitsPerChar { get; }
 
-        private CharEncoding(int bitsPerChar, Func<string, BitString> stringToBits, Func<BitString, string> bitsToString)
+        private CharEncoding( Func<string, BitString> stringToBits, Func<BitString, string> bitsToString)
         {
-            BitsPerChar = bitsPerChar;
             StringToBits = stringToBits;
             BitsToString = bitsToString;
         }
@@ -20,7 +18,6 @@ namespace BoggleSolverConsole.Bits
         /// 8-bit encoding: each character is stored as its ASCII byte value
         /// </summary>
         public static CharEncoding Ascii8Bit { get; } = new CharEncoding(
-            8,
             s =>
             {
                 var bytes = new byte[s.Length];
@@ -44,10 +41,28 @@ namespace BoggleSolverConsole.Bits
         );
 
         /// <summary>
+        /// UTF-8 encoding: each character is stored as 1-4 bytes using UTF-8 encoding
+        /// </summary>
+        public static CharEncoding Utf8 { get; } = new CharEncoding(
+            s => BitString.FromBytes(System.Text.Encoding.UTF8.GetBytes(s)),
+            bits =>
+            {
+                if (bits.Length % 8 != 0)
+                    throw new InvalidOperationException("Bit count must be multiple of 8");
+
+                var bytes = new byte[bits.Length / 8];
+                for (int i = 0; i < bytes.Length; i++)
+                {
+                    bytes[i] = (byte)bits.ToBitPrefix(i * 8, 8).Bits;
+                }
+                return System.Text.Encoding.UTF8.GetString(bytes);
+            }
+        );
+
+        /// <summary>
         /// 5-bit encoding: a-z=0-25, space=26, '\0'=27 (matches CharDictionaryEntry)
         /// </summary>
         public static CharEncoding Compact5Bit { get; } = new CharEncoding(
-            5,
             s =>
             {
                 int totalBits = s.Length * 5;
