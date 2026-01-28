@@ -1,5 +1,3 @@
-using System.Collections;
-
 namespace BoggleSolverConsole.Bits
 {
 
@@ -58,7 +56,7 @@ namespace BoggleSolverConsole.Bits
             Insert(bits, 0);
         }
 
-        private void Insert(BitArray bits, int index)
+        private void Insert(BitString bits, int index)
         {
             // Match prefix first
             int prefixIndex = 0;
@@ -120,17 +118,17 @@ namespace BoggleSolverConsole.Bits
         /// Create a new leaf node with the remaining bits as its prefix.
         /// If the prefix exceeds MaxLength, creates a chain of nodes.
         /// </summary>
-        private static BinaryTrieNode CreateLeafWithPrefix(BitArray bits, int startIndex)
+        private static BinaryTrieNode CreateLeafWithPrefix(BitString bits, int startIndex)
         {
             int remaining = bits.Length - startIndex;
 
             if (remaining <= BitPrefix.MaxLength)
             {
-                // Simple case: fits in one node
+                // Simple case: fits in one node - O(1) using ToBitPrefix
                 return new BinaryTrieNode
                 {
                     IsWord = true,
-                    Prefix = BitPrefix.FromBitArray(bits, startIndex, remaining)
+                    Prefix = bits.ToBitPrefix(startIndex, remaining)
                 };
             }
 
@@ -138,7 +136,7 @@ namespace BoggleSolverConsole.Bits
             var node = new BinaryTrieNode
             {
                 IsWord = false,
-                Prefix = BitPrefix.FromBitArray(bits, startIndex, BitPrefix.MaxLength)
+                Prefix = bits.ToBitPrefix(startIndex, BitPrefix.MaxLength)
             };
 
             // The next bit determines which child branch
@@ -157,7 +155,7 @@ namespace BoggleSolverConsole.Bits
         /// Split this node at the given prefix index, creating a child for the remaining prefix
         /// and inserting bits for a new word that diverges at this point.
         /// </summary>
-        private void SplitAt(int splitIndex, BitArray newBits, int newBitIndex)
+        private void SplitAt(int splitIndex, BitString newBits, int newBitIndex)
         {
             // Create child node with remainder of original prefix
             var child = new BinaryTrieNode
@@ -440,7 +438,7 @@ namespace BoggleSolverConsole.Bits
             return Contains(bits, 0);
         }
 
-        private bool Contains(BitArray bits, int bitIndex)
+        private bool Contains(BitString bits, int bitIndex)
         {
             // Match prefix
             for (int i = 0; i < Prefix.Length; i++)
@@ -489,7 +487,7 @@ namespace BoggleSolverConsole.Bits
             // If this is a word, convert bits to string and yield
             if (IsWord)
             {
-                yield return encoding.BitsToString(new BitArray(bits.ToArray()));
+                yield return encoding.BitsToString(BitString.FromBools(bits));
             }
 
             // Recurse to children
