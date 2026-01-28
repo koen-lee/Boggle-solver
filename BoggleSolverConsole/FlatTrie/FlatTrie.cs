@@ -27,6 +27,11 @@ public class FlatTrie : ITrie
     /// </summary>
     private int _usedBits = 0;
 
+    /// <summary>
+    /// Flag indicating sizes may be stale and need recalculation.
+    /// </summary>
+    private bool _sizesStale = false;
+
     public FlatTrie()
     {
         // Buffer starts as all zeros, which is a dead end (empty trie)
@@ -38,6 +43,8 @@ public class FlatTrie : ITrie
 
         if (string.IsNullOrEmpty(key))
             return false;
+
+        RebuildIfStale();
 
         // Convert key to bits
         byte[] keyBytes = Encoding.UTF8.GetBytes(key);
@@ -127,11 +134,11 @@ public class FlatTrie : ITrie
         if (!leftHasValue && !leftHasChildren)
         {
             // Left is dead end
-            rightChildPos = leftChildPos + 2;
+            rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
         }
         else
         {
-            int leftSize = VarInt.Read(ref reader);
+            int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
             rightChildPos = leftChildPos + leftSize;
         }
 
@@ -154,6 +161,8 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return false;
 
+        RebuildIfStale();
+
         // Convert key to bits
         byte[] keyBytes = Encoding.UTF8.GetBytes(key);
         var keyBits = BitString.FromBytes(keyBytes);
@@ -169,8 +178,9 @@ public class FlatTrie : ITrie
             return WriteNewRoot(keyBits, value);
         }
 
-        // Find where to insert
-        return TryWriteInternal(keyBits, 0, 0, value);
+        // Track ancestors during descent for size updates
+        var ancestors = new List<int>();
+        return TryWriteInternal(keyBits, 0, 0, value, ancestors);
     }
 
     private bool WriteNewRoot(BitString keyBits, long value)
@@ -197,7 +207,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private bool TryWriteInternal(BitString keyBits, int keyBitIndex, int nodeBitPos, long value)
+    private bool TryWriteInternal(BitString keyBits, int keyBitIndex, int nodeBitPos, long value, List<int> ancestors)
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
@@ -228,7 +238,7 @@ public class FlatTrie : ITrie
         // Case 1: Divergence within prefix - need to split
         if (matchedBits < prefixLength && keyBitIndex + matchedBits < keyBits.Length)
         {
-            return SplitNode(nodeBitPos, keyBits, keyBitIndex, matchedBits, value);
+            return SplitNode(nodeBitPos, keyBits, keyBitIndex, matchedBits, value, ancestors);
         }
 
         // Case 2: Key exhausted within or at end of prefix
@@ -237,12 +247,12 @@ public class FlatTrie : ITrie
             if (matchedBits == prefixLength)
             {
                 // Exact match - update value
-                return UpdateNodeValue(nodeBitPos, value, !hasValue);
+                return UpdateNodeValue(nodeBitPos, value, !hasValue, ancestors);
             }
             else
             {
                 // Key ends in middle of prefix - need to split
-                return SplitNodeKeyExhausted(nodeBitPos, keyBits, keyBitIndex, matchedBits, value);
+                return SplitNodeKeyExhausted(nodeBitPos, keyBits, keyBitIndex, matchedBits, value, ancestors);
             }
         }
 
@@ -253,7 +263,7 @@ public class FlatTrie : ITrie
         if (!hasChildren)
         {
             // Need to add children to this leaf
-            return AddChildToLeaf(nodeBitPos, keyBits, keyBitIndex, value);
+            return AddChildToLeaf(nodeBitPos, keyBits, keyBitIndex, value, ancestors);
         }
 
         // Skip value if present
@@ -261,6 +271,9 @@ public class FlatTrie : ITrie
         {
             reader.Skip(64);
         }
+
+        // Add this node to ancestors before descending
+        ancestors.Add(nodeBitPos);
 
         // Follow appropriate child
         bool nextBit = keyBits[keyBitIndex];
@@ -273,11 +286,11 @@ public class FlatTrie : ITrie
         int rightChildPos;
         if (!leftHasValue && !leftHasChildren)
         {
-            rightChildPos = leftChildPos + 2;
+            rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
         }
         else
         {
-            int leftSize = VarInt.Read(ref reader);
+            int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
             rightChildPos = leftChildPos + leftSize;
         }
 
@@ -287,9 +300,9 @@ public class FlatTrie : ITrie
             if (!leftHasValue && !leftHasChildren)
             {
                 // Left is dead end - replace with new node
-                return ReplaceDeadEnd(leftChildPos, keyBits, keyBitIndex, value);
+                return ReplaceDeadEnd(leftChildPos, keyBits, keyBitIndex, value, ancestors);
             }
-            return TryWriteInternal(keyBits, keyBitIndex, leftChildPos, value);
+            return TryWriteInternal(keyBits, keyBitIndex, leftChildPos, value, ancestors);
         }
         else
         {
@@ -301,19 +314,19 @@ public class FlatTrie : ITrie
             if (!rightHasValue && !rightHasChildren)
             {
                 // Right is dead end - replace with new node
-                return ReplaceDeadEnd(rightChildPos, keyBits, keyBitIndex, value);
+                return ReplaceDeadEnd(rightChildPos, keyBits, keyBitIndex, value, ancestors);
             }
-            return TryWriteInternal(keyBits, keyBitIndex, rightChildPos, value);
+            return TryWriteInternal(keyBits, keyBitIndex, rightChildPos, value, ancestors);
         }
     }
 
-    private bool UpdateNodeValue(int nodeBitPos, long value, bool needToAddValue)
+    private bool UpdateNodeValue(int nodeBitPos, long value, bool needToAddValue, List<int> ancestors)
     {
         if (needToAddValue)
         {
             // Need to expand the node to include a value
             // This requires shifting and is complex
-            return RewriteNodeWithValue(nodeBitPos, value);
+            return RewriteNodeWithValue(nodeBitPos, value, ancestors);
         }
 
         // Just update existing value in place
@@ -332,7 +345,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private bool RewriteNodeWithValue(int nodeBitPos, long value)
+    private bool RewriteNodeWithValue(int nodeBitPos, long value, List<int> ancestors)
     {
         // Read current node
         var reader = new BitArrayReader(_buffer, nodeBitPos);
@@ -380,12 +393,12 @@ public class FlatTrie : ITrie
         // Children were already shifted, and now follow naturally
 
         _usedBits += delta;
-        UpdateAncestorSizes(0, nodeBitPos, delta);
+        UpdateAncestorSizes(ancestors, delta);
 
         return true;
     }
 
-    private bool SplitNode(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue)
+    private bool SplitNode(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
     {
         // Read current node completely first
         var reader = new BitArrayReader(_buffer, nodeBitPos);
@@ -482,7 +495,7 @@ public class FlatTrie : ITrie
         }
 
         _usedBits += delta;
-        UpdateAncestorSizes(0, nodeBitPos, delta);
+        UpdateAncestorSizes(ancestors, delta);
 
         return true;
     }
@@ -538,7 +551,7 @@ public class FlatTrie : ITrie
         writer.WriteBits((uint)(value >> 32), 32);
     }
 
-    private bool SplitNodeKeyExhausted(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue)
+    private bool SplitNodeKeyExhausted(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
     {
         // The new key ends within the existing prefix.
         // New structure:
@@ -642,12 +655,12 @@ public class FlatTrie : ITrie
         }
 
         _usedBits += delta;
-        UpdateAncestorSizes(0, nodeBitPos, delta);
+        UpdateAncestorSizes(ancestors, delta);
 
         return true;
     }
 
-    private bool AddChildToLeaf(int nodeBitPos, BitString keyBits, int keyBitIndex, long value)
+    private bool AddChildToLeaf(int nodeBitPos, BitString keyBits, int keyBitIndex, long value, List<int> ancestors)
     {
         // Read current leaf node
         var reader = new BitArrayReader(_buffer, nodeBitPos);
@@ -725,12 +738,12 @@ public class FlatTrie : ITrie
         }
 
         _usedBits += delta;
-        UpdateAncestorSizes(0, nodeBitPos, delta);
+        UpdateAncestorSizes(ancestors, delta);
 
         return true;
     }
 
-    private bool ReplaceDeadEnd(int deadEndPos, BitString keyBits, int keyBitIndex, long value)
+    private bool ReplaceDeadEnd(int deadEndPos, BitString keyBits, int keyBitIndex, long value, List<int> ancestors)
     {
         int remainingKeyLen = keyBits.Length - keyBitIndex;
         int newNodeSize = FlatTrieNode.CalculateNodeSize(true, false, remainingKeyLen);
@@ -746,7 +759,7 @@ public class FlatTrie : ITrie
         WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newNodeSize);
 
         _usedBits += delta;
-        UpdateAncestorSizes(0, deadEndPos, delta);
+        UpdateAncestorSizes(ancestors, delta);
 
         return true;
     }
@@ -799,99 +812,201 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private void UpdateAncestorSizes(int rootPos, int targetPos, int delta)
+    private void UpdateAncestorSizes(List<int> ancestors, int delta)
     {
-        // Walk from root to target, updating Size fields along the path
-        if (delta == 0 || rootPos == targetPos)
+        // Update sizes for all ancestors (collected during descent, before modification)
+        if (delta == 0 || ancestors.Count == 0)
             return;
 
-        // Collect positions of nodes on the path to target
-        var path = new List<int>();
-        int currentPos = rootPos;
-
-        while (currentPos != targetPos && currentPos < _usedBits)
+        foreach (int nodePos in ancestors)
         {
-            var reader = new BitArrayReader(_buffer, currentPos);
-            bool hasValue = reader.ReadBit();
-            bool hasChildren = reader.ReadBit();
-
-            if (!hasValue && !hasChildren)
-                break; // Dead end
-
-            path.Add(currentPos);
-
-            int size = VarInt.Read(ref reader);
-            int prefixLength = VarInt.Read(ref reader);
-            reader.Skip(prefixLength);
-
-            if (hasValue)
-                reader.Skip(64);
-
-            if (!hasChildren)
-                break;
-
-            // Check if target is in left or right subtree
-            int leftChildPos = reader.BitPosition;
-            bool leftHasValue = reader.ReadBit();
-            bool leftHasChildren = reader.ReadBit();
-
-            int rightChildPos;
-            if (!leftHasValue && !leftHasChildren)
-            {
-                rightChildPos = leftChildPos + 2;
-            }
-            else
-            {
-                int leftSize = VarInt.Read(ref reader);
-                rightChildPos = leftChildPos + leftSize;
-            }
-
-            // Determine which subtree contains the target
-            if (targetPos >= leftChildPos && targetPos < rightChildPos)
-            {
-                currentPos = leftChildPos;
-            }
-            else if (targetPos >= rightChildPos)
-            {
-                currentPos = rightChildPos;
-            }
-            else
-            {
-                break; // Target not in this subtree
-            }
-
-            // Safety check to prevent infinite loop
-            if (currentPos == path[^1])
-                break;
-        }
-
-        // Update sizes for nodes on the path (from root toward target)
-        foreach (int nodePos in path)
-        {
-            if (nodePos == targetPos)
-                continue;
-
             var reader = new BitArrayReader(_buffer, nodePos);
             reader.ReadBit(); // HasValue
             reader.ReadBit(); // HasChildren
 
             int sizePos = reader.BitPosition;
             int currentSize = VarInt.Read(ref reader);
+            int currentClass = VarInt.GetClass(currentSize);
+
             int newSize = currentSize + delta;
+            int newClass = VarInt.GetClass(newSize);
 
-            // Check if encoding size would change
-            int oldEncodingSize = VarInt.GetEncodedBitCount(currentSize);
-            int newEncodingSize = VarInt.GetEncodedBitCount(newSize);
-
-            if (oldEncodingSize == newEncodingSize)
+            if (newClass <= currentClass)
             {
-                // Update in place
+                // Fits in current encoding - update in place using same class
                 var writer = new BitArrayWriter(_buffer, sizePos);
-                VarInt.Write(ref writer, newSize);
+                VarInt.WriteWithClass(ref writer, newSize, currentClass);
             }
-            // If encoding size changes, we'd need to shift - this is complex
-            // For now, skip these cases (they should be rare)
+            else
+            {
+                // Needs larger encoding - mark trie as needing rebuild
+                _sizesStale = true;
+                return; // Stop updating, will rebuild
+            }
         }
+    }
+
+    /// <summary>
+    /// Rebuild the trie to fix stale sizes.
+    /// Collects all key-value pairs and reinserts them.
+    /// </summary>
+    private void RebuildIfStale()
+    {
+        if (!_sizesStale)
+            return;
+
+        // Collect all key-value pairs
+        var entries = new List<(string key, long value)>();
+        CollectEntries(0, new List<bool>(), entries);
+
+        // Clear buffer
+        Array.Clear(_buffer);
+        _usedBits = 0;
+        _sizesStale = false;
+
+        // Reinsert all entries
+        foreach (var (key, value) in entries)
+        {
+            TryWrite(key, value);
+        }
+    }
+
+    /// <summary>
+    /// Collect all key-value pairs from the trie.
+    /// </summary>
+    private void CollectEntries(int nodeBitPos, List<bool> keyBits, List<(string key, long value)> entries)
+    {
+        var reader = new BitArrayReader(_buffer, nodeBitPos);
+        bool hasValue = reader.ReadBit();
+        bool hasChildren = reader.ReadBit();
+
+        if (!hasValue && !hasChildren)
+            return; // Dead end
+
+        VarInt.Read(ref reader); // Size (may be stale, but we don't need it for collection)
+        int prefixLength = VarInt.Read(ref reader);
+
+        // Read and append prefix bits
+        for (int i = 0; i < prefixLength; i++)
+        {
+            keyBits.Add(reader.ReadBit());
+        }
+
+        if (hasValue)
+        {
+            uint low = reader.ReadBits(32);
+            uint high = reader.ReadBits(32);
+            long value = (long)low | ((long)high << 32);
+
+            // Convert bits to string
+            string key = BitsToString(keyBits);
+            if (!string.IsNullOrEmpty(key))
+            {
+                entries.Add((key, value));
+            }
+        }
+
+        if (hasChildren)
+        {
+            // Left child (bit 0)
+            int leftChildPos = reader.BitPosition;
+            keyBits.Add(false);
+            CollectEntries(leftChildPos, keyBits, entries);
+            keyBits.RemoveAt(keyBits.Count - 1);
+
+            // Find right child position by calculating left size
+            int leftSize = CalculateNodeSizeSimple(leftChildPos);
+            int rightChildPos = leftChildPos + leftSize;
+
+            // Right child (bit 1)
+            keyBits.Add(true);
+            CollectEntries(rightChildPos, keyBits, entries);
+            keyBits.RemoveAt(keyBits.Count - 1);
+        }
+
+        // Remove prefix bits we added
+        keyBits.RemoveRange(keyBits.Count - prefixLength, prefixLength);
+    }
+
+    /// <summary>
+    /// Simple size calculation that doesn't rely on stored sizes.
+    /// </summary>
+    private int CalculateNodeSizeSimple(int nodeBitPos)
+    {
+        var reader = new BitArrayReader(_buffer, nodeBitPos);
+        bool hasValue = reader.ReadBit();
+        bool hasChildren = reader.ReadBit();
+
+        if (!hasValue && !hasChildren)
+            return FlatTrieNode.DeadEndSize;
+
+        int sizeStart = reader.BitPosition;
+        VarInt.Read(ref reader); // Skip size
+        int sizeFieldBits = reader.BitPosition - sizeStart;
+
+        int prefixLenStart = reader.BitPosition;
+        int prefixLength = VarInt.Read(ref reader);
+        int prefixLenBits = reader.BitPosition - prefixLenStart;
+
+        reader.Skip(prefixLength);
+        if (hasValue) reader.Skip(64);
+
+        int childrenSize = 0;
+        if (hasChildren)
+        {
+            int leftChildPos = reader.BitPosition;
+            int leftSize = CalculateNodeSizeSimple(leftChildPos);
+            int rightChildPos = leftChildPos + leftSize;
+            int rightSize = CalculateNodeSizeSimple(rightChildPos);
+            childrenSize = leftSize + rightSize;
+        }
+
+        return 2 + sizeFieldBits + prefixLenBits + prefixLength + (hasValue ? 64 : 0) + childrenSize;
+    }
+
+    /// <summary>
+    /// Convert a list of bits back to a UTF-8 string.
+    /// </summary>
+    private static string BitsToString(List<bool> bits)
+    {
+        if (bits.Count == 0 || bits.Count % 8 != 0)
+            return string.Empty;
+
+        byte[] bytes = new byte[bits.Count / 8];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            byte b = 0;
+            for (int j = 0; j < 8; j++)
+            {
+                if (bits[i * 8 + j])
+                    b |= (byte)(1 << j);
+            }
+            bytes[i] = b;
+        }
+
+        try
+        {
+            return Encoding.UTF8.GetString(bytes);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Read a node's size. After RebuildIfStale(), sizes are always valid.
+    /// </summary>
+    private int ReadNodeSize(int nodeBitPos)
+    {
+        var reader = new BitArrayReader(_buffer, nodeBitPos);
+        bool hasValue = reader.ReadBit();
+        bool hasChildren = reader.ReadBit();
+
+        if (!hasValue && !hasChildren)
+            return FlatTrieNode.DeadEndSize; // Dead end
+
+        return VarInt.Read(ref reader);
     }
 
     public void Delete(string key)
@@ -962,11 +1077,11 @@ public class FlatTrie : ITrie
         int rightChildPos;
         if (!leftHasValue && !leftHasChildren)
         {
-            rightChildPos = leftChildPos + 2;
+            rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
         }
         else
         {
-            int leftSize = VarInt.Read(ref reader);
+            int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
             rightChildPos = leftChildPos + leftSize;
         }
 
@@ -1066,11 +1181,11 @@ public class FlatTrie : ITrie
             int rightChildPos;
             if (!leftHasValue && !leftHasChildren)
             {
-                rightChildPos = leftChildPos + 2;
+                rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
             }
             else
             {
-                int leftSize = VarInt.Read(ref reader);
+                int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
                 rightChildPos = leftChildPos + leftSize;
             }
 

@@ -181,10 +181,8 @@ public readonly struct FlatTrieNode
         if (!hasValue && !hasChildren)
             return 2; // Dead end
 
-        int totalSize = 2; // Flags
         // Size field itself - we need to calculate this iteratively
         // since the size field's encoding depends on the total size
-
         int sizeWithoutSizeField = 2; // Flags
         sizeWithoutSizeField += VarInt.GetEncodedBitCount(prefixLength);
         sizeWithoutSizeField += prefixLength;

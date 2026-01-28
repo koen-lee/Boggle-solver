@@ -1,0 +1,12 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="FlatTrie.Tests/FlatTrie.Tests.csproj" />
+  <Project Path="FlatTrie/FlatTrie.csproj" />
+  <Project Path="BitUtilities.Tests/BitUtilities.Tests.csproj" />
+  <Project Path="BitUtilities/BitUtilities.csproj" />
+  <Project Path="BoggleSolverConsole.Tests/BoggleSolverConsole.Tests.csproj" />
+  <Project Path="BoggleSolverConsole/BoggleSolverConsole.csproj">
+  </Project>
+</Solution>

@@ -88,4 +88,29 @@ public static class VarInt
         reader.Seek(startPos);
         return (value, bitCount);
     }
+
+    /// <summary>
+    /// Write a stale marker (0) while preserving the encoding class.
+    /// This keeps the same bit width so layout isn't affected.
+    /// </summary>
+    public static void WriteStale(ref BitArrayWriter writer, int currentEncodingClass)
+    {
+        writer.WriteBits((uint)currentEncodingClass, 2);
+        if (currentEncodingClass > 0)
+        {
+            writer.WriteBits(0, BitWidths[currentEncodingClass]);
+        }
+    }
+
+    /// <summary>
+    /// Write a value using a specific encoding class (for in-place updates).
+    /// </summary>
+    public static void WriteWithClass(ref BitArrayWriter writer, int value, int encodingClass)
+    {
+        writer.WriteBits((uint)encodingClass, 2);
+        if (encodingClass > 0)
+        {
+            writer.WriteBits((uint)value, BitWidths[encodingClass]);
+        }
+    }
 }

@@ -1,9 +1,18 @@
+using System.Diagnostics;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace FlatTrie.Tests;
 
 public class FlatTrieTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public FlatTrieTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     [Fact]
     public void EmptyTrie_TryRead_ReturnsFalse()
     {
@@ -246,6 +255,37 @@ public class FlatTrieTests
     }
 
     [Fact]
+    public void SevenKeys_Diagnostic()
+    {
+        var trie = new FlatTrie();
+
+        // These are the exact keys that fail: key0000 through key0006
+        string[] keys = ["key0000", "key0001", "key0002", "key0003", "key0004", "key0005", "key0006"];
+
+        for (int i = 0; i < keys.Length; i++)
+        {
+            string key = keys[i];
+            long value = i + 1;
+
+            bool written = trie.TryWrite(key, value);
+            Assert.True(written, $"Failed to write {key}");
+
+            // Verify this key is readable
+            bool found = trie.TryRead(key, out long readValue);
+            Assert.True(found, $"Key {key} not found immediately after write (i={i})");
+            Assert.Equal(value, readValue);
+
+            // Verify all previous keys are still readable
+            for (int j = 0; j < i; j++)
+            {
+                found = trie.TryRead(keys[j], out readValue);
+                Assert.True(found, $"Key {keys[j]} not found after inserting {key}");
+                Assert.Equal(j + 1, readValue);
+            }
+        }
+    }
+
+    [Fact]
     public void ManyKeys()
     {
         var trie = new FlatTrie();
@@ -311,5 +351,63 @@ public class FlatTrieTests
 
         Assert.False(trie.TryWrite(null!, 1));
         Assert.False(trie.TryRead(null!, out _));
+    }
+
+    [Fact]
+    public void Overflow_ReturnsFalse_AndLeavesTrieIntact()
+    {
+        var trie = new FlatTrie();
+        var writtenKeys = new Dictionary<string, long>();
+
+        // Fill the trie until it's nearly full
+        // Use unique suffixes (not prefixes) to make the trie grow faster
+        var fillTimer = Stopwatch.StartNew();
+        for (int i = 0; i < 10000; i++)
+        {
+            string key = $"k{i:D6}";
+            long value = i * 100;
+
+            bool written = trie.TryWrite(key, value);
+            if (!written)
+            {
+                // Buffer is full, this is expected
+                break;
+            }
+            writtenKeys[key] = value;
+        }
+        fillTimer.Stop();
+
+        // Ensure we wrote at least some keys
+        Assert.True(writtenKeys.Count > 0, "Should have written at least some keys");
+
+        _output.WriteLine($"Keys written: {writtenKeys.Count}");
+        _output.WriteLine($"Fill time: {fillTimer.ElapsedMilliseconds} ms");
+
+        // Try to write one more key that should fail
+        string overflowKey = $"overflow_{Guid.NewGuid()}";
+        bool overflowWritten = trie.TryWrite(overflowKey, 999999);
+        Assert.False(overflowWritten, "TryWrite should return false when buffer would overflow");
+
+        // Verify the overflow key is not readable
+        Assert.False(trie.TryRead(overflowKey, out _), "Overflow key should not be readable");
+
+        // Verify all previously written keys are still intact
+        var readTimer = Stopwatch.StartNew();
+        foreach (var kvp in writtenKeys)
+        {
+            bool found = trie.TryRead(kvp.Key, out long value);
+            Assert.True(found, $"Key {kvp.Key} should still be readable after failed overflow write");
+            Assert.Equal(kvp.Value, value);
+        }
+        readTimer.Stop();
+
+        _output.WriteLine($"Read all keys time: {readTimer.ElapsedMilliseconds} ms");
+
+        var stats = trie.GetStats();
+        _output.WriteLine($"Node count: {stats.NodeCount}");
+        _output.WriteLine($"Value count: {stats.ValueCount}");
+        _output.WriteLine($"Dead end count: {stats.DeadEndCount}");
+        _output.WriteLine($"Total prefix bits: {stats.TotalPrefixBits}");
+        _output.WriteLine($"Max prefix length: {stats.MaxPrefixLength}");
     }
 }
