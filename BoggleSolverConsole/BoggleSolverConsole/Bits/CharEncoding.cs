@@ -15,32 +15,6 @@ namespace BoggleSolverConsole.Bits
         }
 
         /// <summary>
-        /// 8-bit encoding: each character is stored as its ASCII byte value
-        /// </summary>
-        public static CharEncoding Ascii8Bit { get; } = new CharEncoding(
-            s =>
-            {
-                var bytes = new byte[s.Length];
-                for (int i = 0; i < s.Length; i++)
-                    bytes[i] = (byte)s[i];
-                return BitString.FromBytes(bytes);
-            },
-            bits =>
-            {
-                if (bits.Length % 8 != 0)
-                    throw new InvalidOperationException("Bit count must be multiple of 8");
-
-                var chars = new char[bits.Length / 8];
-                for (int i = 0; i < chars.Length; i++)
-                {
-                    // Extract 8 bits efficiently using ToBitPrefix
-                    chars[i] = (char)bits.ToBitPrefix(i * 8, 8).Bits;
-                }
-                return new string(chars);
-            }
-        );
-
-        /// <summary>
         /// UTF-8 encoding: each character is stored as 1-4 bytes using UTF-8 encoding
         /// </summary>
         public static CharEncoding Utf8 { get; } = new CharEncoding(

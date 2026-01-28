@@ -18,7 +18,7 @@ namespace BoggleSolverConsole.Bits
         /// Build binary trie from a list of words using default 8-bit encoding
         /// </summary>
         public static BinaryTrieNode BuildFromWords(IEnumerable<string> words)
-            => BuildFromWords(words, CharEncoding.Ascii8Bit);
+            => BuildFromWords(words, CharEncoding.Utf8);
 
         /// <summary>
         /// Build binary trie from a list of words using specified encoding.
@@ -45,7 +45,7 @@ namespace BoggleSolverConsole.Bits
         /// Insert a word into the trie using default 8-bit encoding
         /// </summary>
         public void Insert(string word)
-            => Insert(word, CharEncoding.Ascii8Bit);
+            => Insert(word, CharEncoding.Utf8);
 
         /// <summary>
         /// Insert a word into the trie using specified encoding
@@ -427,7 +427,7 @@ namespace BoggleSolverConsole.Bits
         /// Check if a word exists in the trie (using default 8-bit encoding)
         /// </summary>
         public bool Contains(string word)
-            => Contains(word, CharEncoding.Ascii8Bit);
+            => Contains(word, CharEncoding.Utf8);
 
         /// <summary>
         /// Check if a word exists in the trie using specified encoding
@@ -467,7 +467,7 @@ namespace BoggleSolverConsole.Bits
         /// Enumerate all words stored in the trie (using default 8-bit encoding)
         /// </summary>
         public IEnumerable<string> EnumerateWords()
-            => EnumerateWords(CharEncoding.Ascii8Bit);
+            => EnumerateWords(CharEncoding.Utf8);
 
         /// <summary>
         /// Enumerate all words stored in the trie using specified encoding

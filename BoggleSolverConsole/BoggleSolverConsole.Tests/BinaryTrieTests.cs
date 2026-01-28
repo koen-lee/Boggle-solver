@@ -415,7 +415,7 @@ public class BinaryTrieTests
     {
         var words = new[] { "cat", "car", "card", "care", "careful", "dog", "door" };
 
-        var trie8Bit = BinaryTrieNode.BuildFromWords(words, CharEncoding.Ascii8Bit);
+        var trie8Bit = BinaryTrieNode.BuildFromWords(words, CharEncoding.Utf8);
         var trie5Bit = BinaryTrieNode.BuildFromWords(words, CharEncoding.Compact5Bit);
 
         using var ms8 = new MemoryStream();
