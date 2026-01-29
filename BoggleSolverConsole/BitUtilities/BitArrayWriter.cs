@@ -143,4 +143,14 @@ public ref struct BitArrayWriter
             WriteBits(chunk, remaining);
         }
     }
+
+    /// <summary>
+    /// Write a 64-bit long value (LSB first).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void WriteLong(long value)
+    {
+        WriteBits((uint)(value & 0xFFFFFFFF), 32);
+        WriteBits((uint)(value >> 32), 32);
+    }
 }

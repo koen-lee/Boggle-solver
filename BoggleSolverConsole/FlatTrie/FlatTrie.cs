@@ -72,6 +72,18 @@ public class FlatTrie : ITrie
         return size;
     }
 
+    private static BitString KeyToBits(string key)
+        => BitString.FromBytes(Encoding.UTF8.GetBytes(key));
+
+    private uint[] CopyBitsToBuffer(int bitPosition, int bitCount)
+    {
+        var slice = ReadOnlyBitString.Wrap(_buffer).Slice(bitPosition, bitCount);
+        var buffer = new uint[(bitCount + 31) / 32];
+        var writer = new BitArrayWriter(buffer);
+        writer.WriteBitString(ref slice);
+        return buffer;
+    }
+
     public FlatTrie()
     {
         // Buffer starts as all zeros, which is a dead end (empty trie)
@@ -84,11 +96,7 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return false;
 
-        // Convert key to bits
-        byte[] keyBytes = Encoding.UTF8.GetBytes(key);
-        var keyBits = BitString.FromBytes(keyBytes);
-
-        return TryReadInternal(keyBits, 0, 0, out value);
+        return TryReadInternal(KeyToBits(key), 0, 0, out value);
     }
 
     private bool TryReadInternal(BitString keyBits, int keyBitIndex, int nodeBitPos, out long value)
@@ -130,10 +138,7 @@ public class FlatTrie : ITrie
         {
             if (hasValue)
             {
-                // Read value
-                uint low = reader.ReadBits(32);
-                uint high = reader.ReadBits(32);
-                value = (long)low | ((long)high << 32);
+                value = reader.ReadLong();
                 return true;
             }
             return false; // Key matches but no value stored here
@@ -185,9 +190,7 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return false;
 
-        // Convert key to bits
-        byte[] keyBytes = Encoding.UTF8.GetBytes(key);
-        var keyBits = BitString.FromBytes(keyBytes);
+        var keyBits = KeyToBits(key);
 
         // Check if trie is empty
         var reader = new BitArrayReader(_buffer);
@@ -221,8 +224,7 @@ public class FlatTrie : ITrie
         WriteSize(ref writer, nodeSize);
         VarInt.Write(ref writer, prefixLength);
         writer.WriteBitString(keyBits);
-        writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-        writer.WriteBits((uint)(value >> 32), 32);
+        writer.WriteLong(value);
 
         _usedBits = nodeSize;
         return true;
@@ -335,8 +337,7 @@ public class FlatTrie : ITrie
 
         // Now at value position
         var writer = new BitArrayWriter(_buffer, reader.BitPosition);
-        writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-        writer.WriteBits((uint)(value >> 32), 32);
+        writer.WriteLong(value);
 
         return true;
     }
@@ -350,11 +351,7 @@ public class FlatTrie : ITrie
         int oldSize = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
-        // Copy prefix to temporary buffer
-        var prefix = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
-        var prefixBits = new uint[(prefixLength + 31) / 32];
-        var prefixWriter = new BitArrayWriter(prefixBits);
-        prefixWriter.WriteBitString(ref prefix);
+        var prefixBits = CopyBitsToBuffer(reader.BitPosition, prefixLength);
 
         // Calculate new size (adding 64 bits for value)
         int childrenSize = hasChildren ? (oldSize - (reader.BitPosition - nodeBitPos)) : 0;
@@ -374,12 +371,11 @@ public class FlatTrie : ITrie
         VarInt.Write(ref writer, prefixLength);
 
         // Write prefix
-        prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
+        var prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
         writer.WriteBitString(ref prefix);
 
         // Write value
-        writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-        writer.WriteBits((uint)(value >> 32), 32);
+        writer.WriteLong(value);
 
         // Children were already shifted, and now follow naturally
 
@@ -397,36 +393,17 @@ public class FlatTrie : ITrie
         int oldSize = ReadSize(ref reader);
         int oldPrefixLength = VarInt.Read(ref reader);
 
-        // Read the entire old prefix
-        var oldPrefixBits = new uint[(oldPrefixLength + 31) / 32];
-        var prefixWriter = new BitArrayWriter(oldPrefixBits);
-        for (int i = 0; i < oldPrefixLength; i++)
-        {
-            prefixWriter.WriteBit(reader.ReadBit());
-        }
+        var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
+        reader.Skip(oldPrefixLength);
 
-        // Read old value if present
-        long oldValue = 0;
-        if (oldHasValue)
-        {
-            uint low = reader.ReadBits(32);
-            uint high = reader.ReadBits(32);
-            oldValue = (long)low | ((long)high << 32);
-        }
+        long oldValue = oldHasValue ? reader.ReadLong() : 0;
 
         // Save children data if present (BEFORE any shifting)
         int childrenStartPos = reader.BitPosition;
         int childrenSize = oldHasChildren ? (oldSize - (childrenStartPos - nodeBitPos)) : 0;
-        uint[]? childrenCopy = null;
-        if (oldHasChildren && childrenSize > 0)
-        {
-            childrenCopy = new uint[(childrenSize + 31) / 32];
-            var childWriter = new BitArrayWriter(childrenCopy);
-            for (int i = 0; i < childrenSize; i++)
-            {
-                childWriter.WriteBit(reader.ReadBit());
-            }
-        }
+        uint[]? childrenCopy = oldHasChildren && childrenSize > 0
+            ? CopyBitsToBuffer(childrenStartPos, childrenSize)
+            : null;
 
         // The diverging bits
         var oldPrefixReader = new BitArrayReader(oldPrefixBits, matchedBits);
@@ -506,10 +483,7 @@ public class FlatTrie : ITrie
         }
 
         if (hasValue)
-        {
-            writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-            writer.WriteBits((uint)(value >> 32), 32);
-        }
+            writer.WriteLong(value);
 
         // Copy children data if present
         if (hasChildren && childrenData != null && childrenSize > 0)
@@ -536,8 +510,7 @@ public class FlatTrie : ITrie
         }
 
         // Write value
-        writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
-        writer.WriteBits((uint)(value >> 32), 32);
+        writer.WriteLong(value);
     }
 
     private bool SplitNodeKeyExhausted(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
@@ -555,36 +528,17 @@ public class FlatTrie : ITrie
         int oldSize = ReadSize(ref reader);
         int oldPrefixLength = VarInt.Read(ref reader);
 
-        // Read the entire old prefix
-        var oldPrefixBits = new uint[(oldPrefixLength + 31) / 32];
-        var prefixWriter = new BitArrayWriter(oldPrefixBits);
-        for (int i = 0; i < oldPrefixLength; i++)
-        {
-            prefixWriter.WriteBit(reader.ReadBit());
-        }
+        var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
+        reader.Skip(oldPrefixLength);
 
-        // Read old value if present
-        long oldValue = 0;
-        if (oldHasValue)
-        {
-            uint low = reader.ReadBits(32);
-            uint high = reader.ReadBits(32);
-            oldValue = (long)low | ((long)high << 32);
-        }
+        long oldValue = oldHasValue ? reader.ReadLong() : 0;
 
         // Save children data if present
         int childrenStartPos = reader.BitPosition;
         int childrenSize = oldHasChildren ? (oldSize - (childrenStartPos - nodeBitPos)) : 0;
-        uint[]? childrenCopy = null;
-        if (oldHasChildren && childrenSize > 0)
-        {
-            childrenCopy = new uint[(childrenSize + 31) / 32];
-            var childWriter = new BitArrayWriter(childrenCopy);
-            for (int i = 0; i < childrenSize; i++)
-            {
-                childWriter.WriteBit(reader.ReadBit());
-            }
-        }
+        uint[]? childrenCopy = oldHasChildren && childrenSize > 0
+            ? CopyBitsToBuffer(childrenStartPos, childrenSize)
+            : null;
 
         // The bit after the matched portion determines which child branch
         var oldPrefixReader = new BitArrayReader(oldPrefixBits, matchedBits);
@@ -624,8 +578,7 @@ public class FlatTrie : ITrie
         }
 
         // Write new value
-        writer.WriteBits((uint)(newValue & 0xFFFFFFFF), 32);
-        writer.WriteBits((uint)(newValue >> 32), 32);
+        writer.WriteLong(newValue);
 
         // Write children: old content on one side, dead end on other
         if (oldNextBit == false)
@@ -658,22 +611,10 @@ public class FlatTrie : ITrie
         int oldSize = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
-        // Read prefix
-        var prefixBits = new uint[(prefixLength + 31) / 32];
-        var prefixWriter = new BitArrayWriter(prefixBits);
-        for (int i = 0; i < prefixLength; i++)
-        {
-            prefixWriter.WriteBit(reader.ReadBit());
-        }
+        var prefixBits = CopyBitsToBuffer(reader.BitPosition, prefixLength);
+        reader.Skip(prefixLength);
 
-        // Read value
-        long existingValue = 0;
-        if (hasValue)
-        {
-            uint low = reader.ReadBits(32);
-            uint high = reader.ReadBits(32);
-            existingValue = (long)low | ((long)high << 32);
-        }
+        long existingValue = hasValue ? reader.ReadLong() : 0;
 
         // The next bit determines which child
         bool nextBit = keyBits[keyBitIndex];
@@ -708,8 +649,7 @@ public class FlatTrie : ITrie
 
         if (hasValue)
         {
-            writer.WriteBits((uint)(existingValue & 0xFFFFFFFF), 32);
-            writer.WriteBits((uint)(existingValue >> 32), 32);
+            writer.WriteLong(existingValue);
         }
 
         // Write children
@@ -927,40 +867,6 @@ public class FlatTrie : ITrie
     }
 
     /// <summary>
-    /// Simple size calculation that doesn't rely on stored sizes.
-    /// </summary>
-    private int CalculateNodeSizeSimple(int nodeBitPos)
-    {
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
-
-        if (!hasValue && !hasChildren)
-            return DeadEndSize;
-
-        reader.Skip(SizeFieldBits);
-
-        int prefixLenStart = reader.BitPosition;
-        int prefixLength = VarInt.Read(ref reader);
-        int prefixLenBits = reader.BitPosition - prefixLenStart;
-
-        reader.Skip(prefixLength);
-        if (hasValue) reader.Skip(64);
-
-        int childrenSize = 0;
-        if (hasChildren)
-        {
-            int leftChildPos = reader.BitPosition;
-            int leftSize = CalculateNodeSizeSimple(leftChildPos);
-            int rightChildPos = leftChildPos + leftSize;
-            int rightSize = CalculateNodeSizeSimple(rightChildPos);
-            childrenSize = leftSize + rightSize;
-        }
-
-        return 2 + SizeFieldBits + prefixLenBits + prefixLength + (hasValue ? 64 : 0) + childrenSize;
-    }
-
-    /// <summary>
     /// Calculate child positions by reading the left child header to determine its size.
     /// </summary>
     private (int leftPos, int rightPos, bool leftIsDead) CalculateChildPositions(ref BitArrayReader reader)
@@ -980,11 +886,8 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return;
 
-        byte[] keyBytes = Encoding.UTF8.GetBytes(key);
-        var keyBits = BitString.FromBytes(keyBytes);
-
         // Find the node and clear HasValue
-        DeleteInternal(keyBits, 0, 0);
+        DeleteInternal(KeyToBits(key), 0, 0);
     }
 
     private bool DeleteInternal(BitString keyBits, int keyBitIndex, int nodeBitPos)

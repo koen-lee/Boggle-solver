@@ -127,4 +127,15 @@ public ref struct BitArrayReader
         result = result.Slice(_bitPosition, length);
         return result;
     }
+
+    /// <summary>
+    /// Read a 64-bit long value (LSB first).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public long ReadLong()
+    {
+        uint low = ReadBits(32);
+        uint high = ReadBits(32);
+        return low | ((long)high << 32);
+    }
 }
