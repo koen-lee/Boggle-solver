@@ -13,10 +13,10 @@ public class FlatTrieBenchmarks
     private FlatTrie _prefilledTrie = null!;
     private string[] _fileKeys = null!;
     private Dictionary<string, long> _prefilledValues = null!;
-    private FlatTrie _prefilledGuidTrie;
-    private Dictionary<string, long> _prefilledGuidValues;
-    private FlatTrie _prefilledFileTrie;
-    private Dictionary<string, long> _prefilledFileValues;
+    private FlatTrie _prefilledGuidTrie = null!;
+    private Dictionary<string, long> _prefilledGuidValues = null!;
+    private FlatTrie _prefilledFileTrie = null!;
+    private Dictionary<string, long> _prefilledFileValues = null!;
 
     [GlobalSetup]
     public void Setup()
