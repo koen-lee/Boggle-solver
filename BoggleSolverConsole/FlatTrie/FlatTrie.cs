@@ -34,6 +34,18 @@ public class FlatTrie : ITrie
     private const int DeadEndSize = 2;
 
     /// <summary>
+    /// Fixed size in bits for node size fields (raw 18 bits).
+    /// Max value: 262,143 bits = 32KB, which matches our buffer size.
+    /// </summary>
+    private const int SizeFieldBits = 18;
+
+    private static void WriteSize(ref BitArrayWriter writer, int value)
+        => writer.WriteBits((uint)value, SizeFieldBits);
+
+    private static int ReadSize(ref BitArrayReader reader)
+        => (int)reader.ReadBits(SizeFieldBits);
+
+    /// <summary>
     /// Write a dead end marker.
     /// </summary>
     private static void WriteDeadEnd(ref BitArrayWriter writer)
@@ -51,7 +63,7 @@ public class FlatTrie : ITrie
             return DeadEndSize;
 
         int size = 2; // Flags
-        size += VarInt.SizeFieldBits; // Fixed size field
+        size += SizeFieldBits; // Fixed size field
         size += VarInt.GetEncodedBitCount(prefixLength);
         size += prefixLength;
         if (hasValue) size += 64;
@@ -90,7 +102,7 @@ public class FlatTrie : ITrie
             return false;
 
         // Read node header
-        _ = VarInt.ReadSize(ref reader);
+        _ = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         // Match prefix bits against key bits
@@ -206,7 +218,7 @@ public class FlatTrie : ITrie
         // Write the node
         writer.WriteBit(true);  // HasValue
         writer.WriteBit(false); // HasChildren
-        VarInt.WriteSize(ref writer, nodeSize);
+        WriteSize(ref writer, nodeSize);
         VarInt.Write(ref writer, prefixLength);
         writer.WriteBitString(keyBits);
         writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
@@ -225,7 +237,7 @@ public class FlatTrie : ITrie
         // Dead end - this shouldn't happen if called correctly
         if (isDeadEnd)
             return false;
-        _ = VarInt.ReadSize(ref reader);
+        _ = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
         int prefixStartPos = reader.BitPosition;
 
@@ -317,7 +329,7 @@ public class FlatTrie : ITrie
         var reader = new BitArrayReader(_buffer, nodeBitPos);
         reader.ReadBit(); // HasValue
         reader.ReadBit(); // HasChildren
-        VarInt.ReadSize(ref reader); // Size
+        ReadSize(ref reader); // Size
         int prefixLength = VarInt.Read(ref reader);
         reader.Skip(prefixLength); // Skip prefix
 
@@ -335,7 +347,7 @@ public class FlatTrie : ITrie
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
         var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
-        int oldSize = VarInt.ReadSize(ref reader);
+        int oldSize = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         // Copy prefix to temporary buffer
@@ -358,7 +370,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(true);  // HasValue
         writer.WriteBit(hasChildren);
-        VarInt.WriteSize(ref writer, newSize);
+        WriteSize(ref writer, newSize);
         VarInt.Write(ref writer, prefixLength);
 
         // Write prefix
@@ -382,7 +394,7 @@ public class FlatTrie : ITrie
         // Read current node completely first
         var reader = new BitArrayReader(_buffer, nodeBitPos);
         var (oldHasValue, oldHasChildren, _) = ReadNodeHeader(ref reader);
-        int oldSize = VarInt.ReadSize(ref reader);
+        int oldSize = ReadSize(ref reader);
         int oldPrefixLength = VarInt.Read(ref reader);
 
         // Read the entire old prefix
@@ -445,7 +457,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(false); // HasValue
         writer.WriteBit(true);  // HasChildren
-        VarInt.WriteSize(ref writer, newParentSize);
+        WriteSize(ref writer, newParentSize);
         VarInt.Write(ref writer, matchedBits);
 
         // Write matched prefix
@@ -483,7 +495,7 @@ public class FlatTrie : ITrie
     {
         writer.WriteBit(hasValue);
         writer.WriteBit(hasChildren);
-        VarInt.WriteSize(ref writer, totalSize);
+        WriteSize(ref writer, totalSize);
         VarInt.Write(ref writer, prefixLength);
 
         // Write remaining prefix
@@ -514,7 +526,7 @@ public class FlatTrie : ITrie
     {
         writer.WriteBit(true);  // HasValue
         writer.WriteBit(false); // HasChildren
-        VarInt.WriteSize(ref writer, totalSize);
+        WriteSize(ref writer, totalSize);
         VarInt.Write(ref writer, prefixLength);
 
         // Write remaining key bits as prefix
@@ -540,7 +552,7 @@ public class FlatTrie : ITrie
         var reader = new BitArrayReader(_buffer, nodeBitPos);
         bool oldHasValue = reader.ReadBit();
         bool oldHasChildren = reader.ReadBit();
-        int oldSize = VarInt.ReadSize(ref reader);
+        int oldSize = ReadSize(ref reader);
         int oldPrefixLength = VarInt.Read(ref reader);
 
         // Read the entire old prefix
@@ -601,7 +613,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(true);  // HasValue (new key's value)
         writer.WriteBit(true);  // HasChildren
-        VarInt.WriteSize(ref writer, newParentSize);
+        WriteSize(ref writer, newParentSize);
         VarInt.Write(ref writer, matchedBits);
 
         // Write matched prefix (the new key's bits)
@@ -643,7 +655,7 @@ public class FlatTrie : ITrie
         var reader = new BitArrayReader(_buffer, nodeBitPos);
         bool hasValue = reader.ReadBit();
         reader.ReadBit(); // HasChildren (false)
-        int oldSize = VarInt.ReadSize(ref reader);
+        int oldSize = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         // Read prefix
@@ -685,7 +697,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(hasValue);
         writer.WriteBit(true); // HasChildren now
-        VarInt.WriteSize(ref writer, newSize);
+        WriteSize(ref writer, newSize);
         VarInt.Write(ref writer, prefixLength);
 
         var prefixReader = new BitArrayReader(prefixBits);
@@ -904,13 +916,13 @@ public class FlatTrie : ITrie
             reader.ReadBit(); // HasChildren
 
             int sizePos = reader.BitPosition;
-            int currentSize = VarInt.ReadSize(ref reader);
+            int currentSize = ReadSize(ref reader);
             int newSize = currentSize + delta;
 
             // Since we always use fixed 18-bit encoding,
             // updates always fit in place - no rebuild needed
             var writer = new BitArrayWriter(_buffer, sizePos);
-            VarInt.WriteSize(ref writer, newSize);
+            WriteSize(ref writer, newSize);
         }
     }
 
@@ -926,7 +938,7 @@ public class FlatTrie : ITrie
         if (!hasValue && !hasChildren)
             return DeadEndSize;
 
-        VarInt.ReadSize(ref reader); // Skip size (fixed 18 bits)
+        ReadSize(ref reader); // Skip size (fixed 18 bits)
 
         int prefixLenStart = reader.BitPosition;
         int prefixLength = VarInt.Read(ref reader);
@@ -945,7 +957,7 @@ public class FlatTrie : ITrie
             childrenSize = leftSize + rightSize;
         }
 
-        return 2 + VarInt.SizeFieldBits + prefixLenBits + prefixLength + (hasValue ? 64 : 0) + childrenSize;
+        return 2 + SizeFieldBits + prefixLenBits + prefixLength + (hasValue ? 64 : 0) + childrenSize;
     }
 
     /// <summary>
@@ -958,7 +970,7 @@ public class FlatTrie : ITrie
 
         int rightChildPos = leftIsDeadEnd
             ? leftChildPos + DeadEndSize
-            : leftChildPos + VarInt.ReadSize(ref reader);
+            : leftChildPos + ReadSize(ref reader);
 
         return (leftChildPos, rightChildPos, leftIsDeadEnd);
     }
@@ -982,7 +994,7 @@ public class FlatTrie : ITrie
         var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
         if (isDeadEnd)
             return false; // Dead end
-        _ = VarInt.ReadSize(ref reader);
+        _ = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         // Match prefix
@@ -1059,7 +1071,7 @@ public class FlatTrie : ITrie
         }
         else
         {
-            _usedBits = VarInt.ReadSize(ref reader);
+            _usedBits = ReadSize(ref reader);
         }
     }
 
@@ -1086,7 +1098,7 @@ public class FlatTrie : ITrie
         }
 
         stats.NodeCount++;
-        _ = VarInt.ReadSize(ref reader);
+        _ = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
 
         stats.TotalPrefixBits += prefixLength;
