@@ -89,18 +89,26 @@ public static class VarInt
     }
 
     /// <summary>
-    /// Fixed size in bits for node size fields (always class 3 = 20 bits).
+    /// Fixed size in bits for node size fields (raw 18 bits, no class selector).
     /// Using fixed size eliminates the need for trie rebuilds when sizes grow.
+    /// Max value: 262,143 bits = 32KB, which matches our buffer size.
     /// </summary>
-    public const int SizeFieldBits = 20;
+    public const int SizeFieldBits = 18;
 
     /// <summary>
-    /// Write a node size field using fixed class 3 encoding.
+    /// Write a node size field using fixed 18-bit encoding (no class selector).
     /// This eliminates size field overflow and avoids costly rebuilds.
     /// </summary>
     public static void WriteSize(ref BitArrayWriter writer, int value)
     {
-        writer.WriteBits(3, 2);  // Class 3
-        writer.WriteBits((uint)value, 18);  // 18 data bits
+        writer.WriteBits((uint)value, 18);
+    }
+
+    /// <summary>
+    /// Read a node size field using fixed 18-bit encoding.
+    /// </summary>
+    public static int ReadSize(ref BitArrayReader reader)
+    {
+        return (int)reader.ReadBits(18);
     }
 }

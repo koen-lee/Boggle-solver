@@ -40,7 +40,7 @@ public class FlatTrieNode
             Value = 0;
             return;
         }
-        OriginalSize = VarInt.Read(ref reader);
+        OriginalSize = VarInt.ReadSize(ref reader);
         PrefixLength = VarInt.Read(ref reader);
     }
 
