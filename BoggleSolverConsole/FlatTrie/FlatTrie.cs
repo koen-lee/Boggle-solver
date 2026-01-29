@@ -28,6 +28,38 @@ public class FlatTrie : ITrie
     /// </summary>
     private int _usedBits = 0;
 
+    /// <summary>
+    /// Size of a dead end marker in bits.
+    /// </summary>
+    private const int DeadEndSize = 2;
+
+    /// <summary>
+    /// Write a dead end marker.
+    /// </summary>
+    private static void WriteDeadEnd(ref BitArrayWriter writer)
+    {
+        writer.WriteBits(0, 2); // HasValue=0, HasChildren=0
+    }
+
+    /// <summary>
+    /// Calculate the total size needed to write a node.
+    /// Uses fixed 18-bit size field to avoid rebuilds.
+    /// </summary>
+    private static int CalculateNodeSize(bool hasValue, bool hasChildren, int prefixLength, int childrenSize = 0)
+    {
+        if (!hasValue && !hasChildren)
+            return DeadEndSize;
+
+        int size = 2; // Flags
+        size += VarInt.SizeFieldBits; // Fixed size field
+        size += VarInt.GetEncodedBitCount(prefixLength);
+        size += prefixLength;
+        if (hasValue) size += 64;
+        size += childrenSize;
+
+        return size;
+    }
+
     public FlatTrie()
     {
         // Buffer starts as all zeros, which is a dead end (empty trie)
@@ -164,7 +196,7 @@ public class FlatTrie : ITrie
     {
         // Create a leaf node with the entire key as prefix
         int prefixLength = keyBits.Length;
-        int nodeSize = FlatTrieNode.CalculateNodeSize(true, false, prefixLength);
+        int nodeSize = CalculateNodeSize(true, false, prefixLength);
 
         if (nodeSize > BufferSizeBits)
             return false;
@@ -314,7 +346,7 @@ public class FlatTrie : ITrie
 
         // Calculate new size (adding 64 bits for value)
         int childrenSize = hasChildren ? (oldSize - (reader.BitPosition - nodeBitPos)) : 0;
-        int newSize = FlatTrieNode.CalculateNodeSize(true, hasChildren, prefixLength, childrenSize);
+        int newSize = CalculateNodeSize(true, hasChildren, prefixLength, childrenSize);
 
         int delta = newSize - oldSize;
 
@@ -395,10 +427,10 @@ public class FlatTrie : ITrie
         int newRemainingKeyLen = keyBits.Length - keyBitIndex - matchedBits - 1;
 
         // Calculate sizes
-        int oldChildSize = FlatTrieNode.CalculateNodeSize(oldHasValue, oldHasChildren, oldRemainingPrefixLen, childrenSize);
-        int newChildSize = FlatTrieNode.CalculateNodeSize(true, false, newRemainingKeyLen);
+        int oldChildSize = CalculateNodeSize(oldHasValue, oldHasChildren, oldRemainingPrefixLen, childrenSize);
+        int newChildSize = CalculateNodeSize(true, false, newRemainingKeyLen);
 
-        int newParentSize = FlatTrieNode.CalculateNodeSize(false, true, matchedBits, oldChildSize + newChildSize);
+        int newParentSize = CalculateNodeSize(false, true, matchedBits, oldChildSize + newChildSize);
         int delta = newParentSize - oldSize;
 
         // Check space
@@ -550,11 +582,11 @@ public class FlatTrie : ITrie
         int oldRemainingPrefixLen = oldPrefixLength - matchedBits - 1;
 
         // Calculate sizes
-        int oldChildSize = FlatTrieNode.CalculateNodeSize(oldHasValue, oldHasChildren, oldRemainingPrefixLen, childrenSize);
+        int oldChildSize = CalculateNodeSize(oldHasValue, oldHasChildren, oldRemainingPrefixLen, childrenSize);
 
         // New parent: HasValue=true, HasChildren=true, one child is old content, other is dead end
-        int newParentChildrenSize = oldChildSize + FlatTrieNode.DeadEndSize;
-        int newParentSize = FlatTrieNode.CalculateNodeSize(true, true, matchedBits, newParentChildrenSize);
+        int newParentChildrenSize = oldChildSize + DeadEndSize;
+        int newParentSize = CalculateNodeSize(true, true, matchedBits, newParentChildrenSize);
         int delta = newParentSize - oldSize;
 
         // Check space
@@ -589,12 +621,12 @@ public class FlatTrie : ITrie
             // Old content goes left
             WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
                 oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
-            FlatTrieNode.WriteDeadEnd(ref writer);
+            WriteDeadEnd(ref writer);
         }
         else
         {
             // Old content goes right
-            FlatTrieNode.WriteDeadEnd(ref writer);
+            WriteDeadEnd(ref writer);
             WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
                 oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
         }
@@ -636,11 +668,11 @@ public class FlatTrie : ITrie
         keyBitIndex++;
 
         int remainingKeyLen = keyBits.Length - keyBitIndex;
-        int newChildSize = FlatTrieNode.CalculateNodeSize(true, false, remainingKeyLen);
+        int newChildSize = CalculateNodeSize(true, false, remainingKeyLen);
 
         // New structure: this node gets HasChildren=true, with one real child and one dead end
-        int childrenSize = newChildSize + FlatTrieNode.DeadEndSize;
-        int newSize = FlatTrieNode.CalculateNodeSize(hasValue, true, prefixLength, childrenSize);
+        int childrenSize = newChildSize + DeadEndSize;
+        int newSize = CalculateNodeSize(hasValue, true, prefixLength, childrenSize);
         int delta = newSize - oldSize;
 
         if (_usedBits + delta > BufferSizeBits)
@@ -673,12 +705,12 @@ public class FlatTrie : ITrie
         {
             // New child goes left
             WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
-            FlatTrieNode.WriteDeadEnd(ref writer);
+            WriteDeadEnd(ref writer);
         }
         else
         {
             // New child goes right
-            FlatTrieNode.WriteDeadEnd(ref writer);
+            WriteDeadEnd(ref writer);
             WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
         }
 
@@ -691,13 +723,13 @@ public class FlatTrie : ITrie
     private bool ReplaceDeadEnd(int deadEndPos, BitString keyBits, int keyBitIndex, long value, List<int> ancestors)
     {
         int remainingKeyLen = keyBits.Length - keyBitIndex;
-        int newNodeSize = FlatTrieNode.CalculateNodeSize(true, false, remainingKeyLen);
-        int delta = newNodeSize - FlatTrieNode.DeadEndSize;
+        int newNodeSize = CalculateNodeSize(true, false, remainingKeyLen);
+        int delta = newNodeSize - DeadEndSize;
 
         if (_usedBits + delta > BufferSizeBits)
             return false;
 
-        if (!ShiftBits(deadEndPos + FlatTrieNode.DeadEndSize, delta))
+        if (!ShiftBits(deadEndPos + DeadEndSize, delta))
             return false;
 
         var writer = new BitArrayWriter(_buffer, deadEndPos);
@@ -892,7 +924,7 @@ public class FlatTrie : ITrie
         bool hasChildren = reader.ReadBit();
 
         if (!hasValue && !hasChildren)
-            return FlatTrieNode.DeadEndSize;
+            return DeadEndSize;
 
         VarInt.ReadSize(ref reader); // Skip size (fixed 18 bits)
 
@@ -925,7 +957,7 @@ public class FlatTrie : ITrie
         var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
 
         int rightChildPos = leftIsDeadEnd
-            ? leftChildPos + FlatTrieNode.DeadEndSize
+            ? leftChildPos + DeadEndSize
             : leftChildPos + VarInt.ReadSize(ref reader);
 
         return (leftChildPos, rightChildPos, leftIsDeadEnd);
