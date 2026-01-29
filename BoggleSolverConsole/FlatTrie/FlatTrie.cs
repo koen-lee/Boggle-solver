@@ -194,6 +194,20 @@ public class FlatTrie : ITrie
         return (hasValue, hasChildren, isDeadEnd);
     }
 
+    /// <summary>
+    /// Read a full node header: flags, size, prefix length. Reader is left at the prefix start position.
+    /// </summary>
+    private (bool hasValue, bool hasChildren, int size, int prefixLength) ReadFullNodeHeader(int nodeBitPos, out BitArrayReader reader)
+    {
+        reader = new BitArrayReader(_buffer, nodeBitPos);
+        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
+        if (isDeadEnd)
+            return (false, false, DeadEndSize, 0);
+        int size = ReadSize(ref reader);
+        int prefixLength = VarInt.Read(ref reader);
+        return (hasValue, hasChildren, size, prefixLength);
+    }
+
     public bool TryWrite(string key, long value)
     {
         if (string.IsNullOrEmpty(key))
@@ -351,16 +365,11 @@ public class FlatTrie : ITrie
     private bool RewriteNodeWithValue(int nodeBitPos, long value, List<int> ancestors)
     {
         // Read current node
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-
-        var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
-        int oldSize = ReadSize(ref reader);
-        int prefixLength = VarInt.Read(ref reader);
-
+        var (hasValue, hasChildren, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
         var prefixBits = CopyBitsToBuffer(reader.BitPosition, prefixLength);
 
         // Calculate new size (adding 64 bits for value)
-        int childrenSize = hasChildren ? (oldSize - (reader.BitPosition - nodeBitPos)) : 0;
+        int childrenSize = hasChildren ? (oldSize - (reader.BitPosition + prefixLength - nodeBitPos)) : 0;
         int newSize = CalculateNodeSize(true, hasChildren, prefixLength, childrenSize);
 
         int delta = newSize - oldSize;
@@ -388,14 +397,9 @@ public class FlatTrie : ITrie
     private bool SplitNode(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
     {
         // Read current node completely first
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-        var (oldHasValue, oldHasChildren, _) = ReadNodeHeader(ref reader);
-        int oldSize = ReadSize(ref reader);
-        int oldPrefixLength = VarInt.Read(ref reader);
-
+        var (oldHasValue, oldHasChildren, oldSize, oldPrefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
         var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
         reader.Skip(oldPrefixLength);
-
         long oldValue = oldHasValue ? reader.ReadLong() : 0;
 
         // Save children data if present (BEFORE any shifting)
@@ -493,15 +497,9 @@ public class FlatTrie : ITrie
         // - Other child is dead end
 
         // Read current node
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-        bool oldHasValue = reader.ReadBit();
-        bool oldHasChildren = reader.ReadBit();
-        int oldSize = ReadSize(ref reader);
-        int oldPrefixLength = VarInt.Read(ref reader);
-
+        var (oldHasValue, oldHasChildren, oldSize, oldPrefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
         var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
         reader.Skip(oldPrefixLength);
-
         long oldValue = oldHasValue ? reader.ReadLong() : 0;
 
         // Save children data if present
@@ -567,12 +565,7 @@ public class FlatTrie : ITrie
     private bool AddChildToLeaf(int nodeBitPos, BitString keyBits, int keyBitIndex, long value, List<int> ancestors)
     {
         // Read current leaf node
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-        bool hasValue = reader.ReadBit();
-        reader.ReadBit(); // HasChildren (false)
-        int oldSize = ReadSize(ref reader);
-        int prefixLength = VarInt.Read(ref reader);
-
+        var (hasValue, _, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
         var prefixBits = CopyBitsToBuffer(reader.BitPosition, prefixLength);
         reader.Skip(prefixLength);
 
