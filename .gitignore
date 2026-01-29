@@ -2,3 +2,6 @@ bin
 obj
 *.suo
 *.vs
+*.log
+*.html
+*.csv

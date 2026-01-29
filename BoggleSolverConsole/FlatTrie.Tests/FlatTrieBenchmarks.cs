@@ -1,0 +1,137 @@
+using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+
+namespace FlatTrie.Tests;
+
+[MemoryDiagnoser]
+[SimpleJob(warmupCount: 3, iterationCount: 10)]
+public class FlatTrieBenchmarks
+{
+    private string[] _randomOrderKeys = null!;
+    private string[] _sequentialKeys = null!;
+    private FlatTrie _prefilledTrie = null!;
+    private Dictionary<string, long> _prefilledValues = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        // Setup for RandomOrderWrites - same as the test
+        const int keyCount = 2340;
+        _randomOrderKeys = new string[keyCount];
+        _sequentialKeys = new string[keyCount];
+
+        for (int i = 0; i < keyCount; i++)
+        {
+            _randomOrderKeys[i] = $"k{i:D6}";
+            _sequentialKeys[i] = $"k{i:D6}";
+        }
+
+        // Shuffle with fixed seed for reproducibility
+        var random = new Random(12345);
+        for (int i = _randomOrderKeys.Length - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            (_randomOrderKeys[i], _randomOrderKeys[j]) = (_randomOrderKeys[j], _randomOrderKeys[i]);
+        }
+
+        // Pre-fill a trie for read benchmarks
+        _prefilledTrie = new FlatTrie();
+        _prefilledValues = new Dictionary<string, long>();
+        for (int i = 0; i < _sequentialKeys.Length; i++)
+        {
+            string key = _sequentialKeys[i];
+            long value = i * 100;
+            if (_prefilledTrie.TryWrite(key, value))
+            {
+                _prefilledValues[key] = value;
+            }
+        }
+    }
+
+    [Benchmark]
+    public int RandomOrderWrites()
+    {
+        var trie = new FlatTrie();
+        int written = 0;
+
+        for (int i = 0; i < _randomOrderKeys.Length; i++)
+        {
+            if (trie.TryWrite(_randomOrderKeys[i], i * 100))
+                written++;
+        }
+
+        return written;
+    }
+
+    [Benchmark]
+    public int SequentialWrites()
+    {
+        var trie = new FlatTrie();
+        int written = 0;
+
+        for (int i = 0; i < _sequentialKeys.Length; i++)
+        {
+            if (trie.TryWrite(_sequentialKeys[i], i * 100))
+                written++;
+        }
+
+        return written;
+    }
+
+    [Benchmark]
+    public int ReadAllKeys()
+    {
+        int found = 0;
+        foreach (var key in _prefilledValues.Keys)
+        {
+            if (_prefilledTrie.TryRead(key, out _))
+                found++;
+        }
+        return found;
+    }
+
+    [Benchmark]
+    public (int written, int read) OverflowScenario()
+    {
+        var trie = new FlatTrie();
+        var writtenKeys = new Dictionary<string, long>();
+
+        // Fill until overflow (same as Overflow_ReturnsFalse_AndLeavesTrieIntact)
+        for (int i = 0; i < 10000; i++)
+        {
+            string key = $"k{i:D6}";
+            long value = i * 100;
+
+            if (!trie.TryWrite(key, value))
+                break;
+
+            writtenKeys[key] = value;
+        }
+
+        // Read all back
+        int readCount = 0;
+        foreach (var kvp in writtenKeys)
+        {
+            if (trie.TryRead(kvp.Key, out long value) && value == kvp.Value)
+                readCount++;
+        }
+
+        return (writtenKeys.Count, readCount);
+    }
+}
+
+public class Program
+{
+    public static void Main(string[] args)
+    {
+        if (args.Length > 0 && args[0] == "--benchmark")
+        {
+            BenchmarkRunner.Run<FlatTrieBenchmarks>();
+        }
+        else
+        {
+            Console.WriteLine("Run with --benchmark to execute benchmarks");
+            Console.WriteLine("Or use 'dotnet test' to run unit tests");
+        }
+    }
+}
