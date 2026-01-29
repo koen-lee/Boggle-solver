@@ -281,8 +281,6 @@ public class FlatTrie : ITrie
 
     private bool UpdateNodeValue(int nodeBitPos, long value)
     {
-
-
         // Just update existing value in place
         var reader = new BitArrayReader(_buffer, nodeBitPos);
         reader.ReadBit(); // HasValue
@@ -919,36 +917,6 @@ public class FlatTrie : ITrie
     }
 
     /// <summary>
-    /// Convert a list of bits back to a UTF-8 string.
-    /// </summary>
-    private static string BitsToString(List<bool> bits)
-    {
-        if (bits.Count == 0 || bits.Count % 8 != 0)
-            return string.Empty;
-
-        byte[] bytes = new byte[bits.Count / 8];
-        for (int i = 0; i < bytes.Length; i++)
-        {
-            byte b = 0;
-            for (int j = 0; j < 8; j++)
-            {
-                if (bits[i * 8 + j])
-                    b |= (byte)(1 << j);
-            }
-            bytes[i] = b;
-        }
-
-        try
-        {
-            return Encoding.UTF8.GetString(bytes);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
-
-    /// <summary>
     /// Calculate child positions by reading the left child header to determine its size.
     /// </summary>
     private (int leftPos, int rightPos, bool leftIsDead) CalculateChildPositions(ref BitArrayReader reader)
@@ -958,24 +926,9 @@ public class FlatTrie : ITrie
 
         int rightChildPos = leftIsDeadEnd
             ? leftChildPos + FlatTrieNode.DeadEndSize
-            : leftChildPos + ReadNodeSize(leftChildPos);
+            : leftChildPos + VarInt.ReadSize(ref reader);
 
         return (leftChildPos, rightChildPos, leftIsDeadEnd);
-    }
-
-    /// <summary>
-    /// Read a node's size. After RebuildIfStale(), sizes are always valid.
-    /// </summary>
-    private int ReadNodeSize(int nodeBitPos)
-    {
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-
-        var (_, _, isDeadEnd) = ReadNodeHeader(ref reader);
-
-        if (isDeadEnd)
-            return FlatTrieNode.DeadEndSize; // Dead end
-
-        return VarInt.ReadSize(ref reader);
     }
 
     public void Delete(string key)
