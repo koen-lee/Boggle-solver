@@ -23,15 +23,27 @@ public class FlatTrie : ITrie
     private readonly uint[] _buffer = new uint[BufferSizeUints];
 
     /// <summary>
-    /// Track the used bit count for efficient append operations.
-    /// This is recomputed on Load and updated on Write.
-    /// </summary>
-    private int _usedBits = 0;
-
-    /// <summary>
     /// Size of a dead end marker in bits.
     /// </summary>
     private const int DeadEndSize = 2;
+
+    /// <summary>
+    /// Compute the used bit count from the root node.
+    /// This is the size of the trie root (including header).
+    /// </summary>
+    private int UsedBits
+    {
+        get
+        {
+            var reader = new BitArrayReader(_buffer);
+            var (_, _, isDeadEnd) = ReadNodeHeader(ref reader);
+
+            if (isDeadEnd)
+                return DeadEndSize;
+
+            return ReadSize(ref reader);
+        }
+    }
 
     /// <summary>
     /// Fixed size in bits for node size fields (raw 18 bits).
@@ -250,7 +262,6 @@ public class FlatTrie : ITrie
         WriteNodeHeader(ref writer, true, false, nodeSize, ref prefix);
         writer.WriteLong(value);
 
-        _usedBits = nodeSize;
         return true;
     }
 
@@ -391,7 +402,6 @@ public class FlatTrie : ITrie
 
         // Children were already shifted, and now follow naturally
 
-        _usedBits += delta;
         UpdateAncestorSizes(ancestors, delta);
 
         return true;
@@ -430,7 +440,7 @@ public class FlatTrie : ITrie
         int delta = newParentSize - oldSize;
 
         // Check space
-        if (_usedBits + delta > BufferSizeBits)
+        if (UsedBits + delta > BufferSizeBits)
             return false;
 
         // Shift bits after old node
@@ -458,7 +468,6 @@ public class FlatTrie : ITrie
                 oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
         }
 
-        _usedBits += delta;
         UpdateAncestorSizes(ancestors, delta);
 
         return true;
@@ -528,7 +537,7 @@ public class FlatTrie : ITrie
         int delta = newParentSize - oldSize;
 
         // Check space
-        if (_usedBits + delta > BufferSizeBits)
+        if (UsedBits + delta > BufferSizeBits)
             return false;
 
         // Shift bits after old node
@@ -559,7 +568,6 @@ public class FlatTrie : ITrie
                 oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
         }
 
-        _usedBits += delta;
         UpdateAncestorSizes(ancestors, delta);
 
         return true;
@@ -586,7 +594,7 @@ public class FlatTrie : ITrie
         int newSize = CalculateNodeSize(hasValue, true, prefixLength, childrenSize);
         int delta = newSize - oldSize;
 
-        if (_usedBits + delta > BufferSizeBits)
+        if (UsedBits + delta > BufferSizeBits)
             return false;
 
         if (!ShiftBits(nodeBitPos + oldSize, delta))
@@ -616,7 +624,6 @@ public class FlatTrie : ITrie
             WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
         }
 
-        _usedBits += delta;
         UpdateAncestorSizes(ancestors, delta);
 
         return true;
@@ -628,7 +635,7 @@ public class FlatTrie : ITrie
         int newNodeSize = CalculateNodeSize(true, false, remainingKeyLen);
         int delta = newNodeSize - DeadEndSize;
 
-        if (_usedBits + delta > BufferSizeBits)
+        if (UsedBits + delta > BufferSizeBits)
             return false;
 
         if (!ShiftBits(deadEndPos + DeadEndSize, delta))
@@ -637,7 +644,6 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, deadEndPos);
         WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newNodeSize);
 
-        _usedBits += delta;
         UpdateAncestorSizes(ancestors, delta);
 
         return true;
@@ -651,7 +657,7 @@ public class FlatTrie : ITrie
         if (delta > 0)
         {
             // Expanding - shift right
-            if (_usedBits + delta > BufferSizeBits)
+            if (UsedBits + delta > BufferSizeBits)
                 return false;
 
             ShiftBitsRight(fromBitPos, delta);
@@ -672,7 +678,7 @@ public class FlatTrie : ITrie
     /// </summary>
     private void ShiftBitsRight(int fromBitPos, int delta)
     {
-        int bitsToMove = _usedBits - fromBitPos;
+        int bitsToMove = UsedBits - fromBitPos;
         if (bitsToMove <= 0)
             return;
 
@@ -681,9 +687,10 @@ public class FlatTrie : ITrie
         int wordShift = delta >> 5;  // delta / 32
 
         // Calculate source and destination word ranges
+        int usedBits = UsedBits;
         int srcStartWord = fromBitPos >> 5;
-        int srcEndWord = (_usedBits - 1) >> 5;
-        int dstEndWord = (_usedBits - 1 + delta) >> 5;
+        int srcEndWord = (usedBits - 1) >> 5;
+        int dstEndWord = (usedBits - 1 + delta) >> 5;
 
         if (rot == 0)
         {
@@ -748,12 +755,13 @@ public class FlatTrie : ITrie
     /// </summary>
     private void ShiftBitsLeft(int fromBitPos, int delta)
     {
-        int bitsToMove = _usedBits - fromBitPos;
+        int usedBits = UsedBits;
+        int bitsToMove = usedBits - fromBitPos;
         if (bitsToMove <= 0)
             return;
 
         int dstStartBit = fromBitPos - delta;
-        int srcEndBit = _usedBits;
+        int srcEndBit = usedBits;
 
         // The rotation amount within a word (0-31)
         int rot = delta & 31;
@@ -918,19 +926,7 @@ public class FlatTrie : ITrie
             Buffer.BlockCopy(bytes, 0, _buffer, 0, bytes.Length);
         }
 
-        // Recalculate used bits by finding the root size
-        var reader = new BitArrayReader(_buffer);
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
-
-        if (!hasValue && !hasChildren)
-        {
-            _usedBits = 0;
-        }
-        else
-        {
-            _usedBits = ReadSize(ref reader);
-        }
+        // UsedBits is computed from the buffer, no need to recalculate
     }
 
     /// <summary>
