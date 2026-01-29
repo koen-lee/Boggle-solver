@@ -84,8 +84,27 @@ public class FlatTrie : ITrie
         return size;
     }
 
-    private static BitString KeyToBits(string key)
-        => BitString.FromBytes(Encoding.UTF8.GetBytes(key));
+    /// <summary>
+    /// Encode a string key into a uint span and return as ReadOnlyBitString.
+    /// byteCount must be pre-computed via Encoding.UTF8.GetByteCount(key).
+    /// keyBuffer must have at least (byteCount + 3) / 4 uints.
+    /// </summary>
+    private static ReadOnlyBitString EncodeKey(string key, int byteCount, Span<uint> keyBuffer)
+    {
+        Span<byte> utf8Bytes = stackalloc byte[byteCount];
+        Encoding.UTF8.GetBytes(key, utf8Bytes);
+
+        // Pack bytes into uints (4 bytes per uint, LSB-first)
+        keyBuffer.Clear();
+        for (int i = 0; i < byteCount; i++)
+        {
+            int uintIndex = i / 4;
+            int byteInUint = i % 4;
+            keyBuffer[uintIndex] |= (uint)utf8Bytes[i] << (byteInUint * 8);
+        }
+
+        return ReadOnlyBitString.Wrap(keyBuffer, byteCount * 8);
+    }
 
     private static void WriteNodeHeader(ref BitArrayWriter writer, bool hasValue, bool hasChildren, int nodeSize, ref ReadOnlyBitString prefix)
     {
@@ -117,10 +136,15 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return false;
 
-        return TryReadInternal(KeyToBits(key), 0, 0, out value);
+        int byteCount = Encoding.UTF8.GetByteCount(key);
+        int uintCount = (byteCount + 3) / 4;
+        Span<uint> keyBuffer = stackalloc uint[uintCount];
+        var keyBits = EncodeKey(key, byteCount, keyBuffer);
+
+        return TryReadInternal(ref keyBits, 0, 0, out value);
     }
 
-    private bool TryReadInternal(BitString keyBits, int keyBitIndex, int nodeBitPos, out long value)
+    private bool TryReadInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos, out long value)
     {
         value = 0;
         var reader = new BitArrayReader(_buffer, nodeBitPos);
@@ -145,7 +169,7 @@ public class FlatTrie : ITrie
         if (prefixLength > 0)
         {
             var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
-            var keyView = keyBits.Slice(keyBitIndex, prefixLength).AsReadOnly();
+            var keyView = keyBits.Slice(keyBitIndex, prefixLength);
             int matchedBits = prefixView.CommonPrefixLength(ref keyView);
 
             if (matchedBits < prefixLength)
@@ -189,11 +213,11 @@ public class FlatTrie : ITrie
         {
             if (leftIsDeadEnd)
                 return false;
-            return TryReadInternal(keyBits, keyBitIndex, leftChildPos, out value);
+            return TryReadInternal(ref keyBits, keyBitIndex, leftChildPos, out value);
         }
         else
         {
-            return TryReadInternal(keyBits, keyBitIndex, rightChildPos, out value);
+            return TryReadInternal(ref keyBits, keyBitIndex, rightChildPos, out value);
         }
     }
 
@@ -229,7 +253,10 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return false;
 
-        var keyBits = KeyToBits(key);
+        int byteCount = Encoding.UTF8.GetByteCount(key);
+        int uintCount = (byteCount + 3) / 4;
+        Span<uint> keyBuffer = stackalloc uint[uintCount];
+        var keyBits = EncodeKey(key, byteCount, keyBuffer);
 
         // Check if trie is empty
         var reader = new BitArrayReader(_buffer);
@@ -238,15 +265,15 @@ public class FlatTrie : ITrie
         if (isDeadEnd)
         {
             // Empty trie - create root node with this key
-            return WriteNewRoot(keyBits, value);
+            return WriteNewRoot(ref keyBits, value);
         }
 
         // Track ancestors during descent for size updates
         var ancestors = new List<int>();
-        return TryWriteInternal(keyBits, 0, 0, value, ancestors);
+        return TryWriteInternal(ref keyBits, 0, 0, value, ancestors);
     }
 
-    private bool WriteNewRoot(BitString keyBits, long value)
+    private bool WriteNewRoot(ref ReadOnlyBitString keyBits, long value)
     {
         // Create a leaf node with the entire key as prefix
         int prefixLength = keyBits.Length;
@@ -258,14 +285,13 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer);
 
         // Write the node
-        var prefix = keyBits.AsReadOnly();
-        WriteNodeHeader(ref writer, true, false, nodeSize, ref prefix);
+        WriteNodeHeader(ref writer, true, false, nodeSize, ref keyBits);
         writer.WriteLong(value);
 
         return true;
     }
 
-    private bool TryWriteInternal(BitString keyBits, int keyBitIndex, int nodeBitPos, long value, List<int> ancestors)
+    private bool TryWriteInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos, long value, List<int> ancestors)
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
@@ -286,14 +312,14 @@ public class FlatTrie : ITrie
         if (bitsToCompare > 0)
         {
             var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(prefixStartPos, bitsToCompare);
-            var keyView = keyBits.Slice(keyBitIndex, bitsToCompare).AsReadOnly();
+            var keyView = keyBits.Slice(keyBitIndex, bitsToCompare);
             matchedBits = prefixView.CommonPrefixLength(ref keyView);
         }
 
         // Case 1: Divergence within prefix - need to split
         if (matchedBits < prefixLength && keyBitIndex + matchedBits < keyBits.Length)
         {
-            return SplitNode(nodeBitPos, keyBits, keyBitIndex, matchedBits, value, ancestors);
+            return SplitNode(nodeBitPos, ref keyBits, keyBitIndex, matchedBits, value, ancestors);
         }
 
         // Case 2: Key exhausted within or at end of prefix
@@ -313,7 +339,7 @@ public class FlatTrie : ITrie
             else
             {
                 // Key ends in middle of prefix - need to split
-                return SplitNodeKeyExhausted(nodeBitPos, keyBits, keyBitIndex, matchedBits, value, ancestors);
+                return SplitNodeKeyExhausted(nodeBitPos, matchedBits, value, ancestors);
             }
         }
 
@@ -324,7 +350,7 @@ public class FlatTrie : ITrie
         if (!hasChildren)
         {
             // Need to add children to this leaf
-            return AddChildToLeaf(nodeBitPos, keyBits, keyBitIndex, value, ancestors);
+            return AddChildToLeaf(nodeBitPos, ref keyBits, keyBitIndex, value, ancestors);
         }
 
         // Skip value if present
@@ -345,8 +371,8 @@ public class FlatTrie : ITrie
         if (nextBit == false)
         {
             if (leftIsDeadEnd)
-                return ReplaceDeadEnd(leftChildPos, keyBits, keyBitIndex, value, ancestors);
-            return TryWriteInternal(keyBits, keyBitIndex, leftChildPos, value, ancestors);
+                return ReplaceDeadEnd(leftChildPos, ref keyBits, keyBitIndex, value, ancestors);
+            return TryWriteInternal(ref keyBits, keyBitIndex, leftChildPos, value, ancestors);
         }
         else
         {
@@ -354,8 +380,8 @@ public class FlatTrie : ITrie
             (_, _, bool rightIsDeadEnd) = ReadNodeHeader(ref reader);
 
             if (rightIsDeadEnd)
-                return ReplaceDeadEnd(rightChildPos, keyBits, keyBitIndex, value, ancestors);
-            return TryWriteInternal(keyBits, keyBitIndex, rightChildPos, value, ancestors);
+                return ReplaceDeadEnd(rightChildPos, ref keyBits, keyBitIndex, value, ancestors);
+            return TryWriteInternal(ref keyBits, keyBitIndex, rightChildPos, value, ancestors);
         }
     }
 
@@ -407,7 +433,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private bool SplitNode(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
+    private bool SplitNode(int nodeBitPos, ref ReadOnlyBitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
     {
         // Read current node completely first
         var (oldHasValue, oldHasChildren, oldSize, oldPrefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
@@ -458,12 +484,12 @@ public class FlatTrie : ITrie
             // Old content goes left, new content goes right
             WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
                 oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
-            WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, newChildSize);
+            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, newChildSize);
         }
         else
         {
             // New content goes left, old content goes right
-            WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, newChildSize);
+            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, newChildSize);
             WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
                 oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
         }
@@ -491,16 +517,16 @@ public class FlatTrie : ITrie
         }
     }
 
-    private void WriteNewKeyAsChild(ref BitArrayWriter writer, BitString keyBits, int startIndex, int prefixLength, long value, int totalSize)
+    private void WriteNewKeyAsChild(ref BitArrayWriter writer, ref ReadOnlyBitString keyBits, int startIndex, int prefixLength, long value, int totalSize)
     {
-        var prefix = keyBits.Slice(startIndex, prefixLength).AsReadOnly();
+        var prefix = keyBits.Slice(startIndex, prefixLength);
         WriteNodeHeader(ref writer, true, false, totalSize, ref prefix);
 
         // Write value
         writer.WriteLong(value);
     }
 
-    private bool SplitNodeKeyExhausted(int nodeBitPos, BitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
+    private bool SplitNodeKeyExhausted(int nodeBitPos, int matchedBits, long newValue, List<int> ancestors)
     {
         // The new key ends within the existing prefix.
         // New structure:
@@ -573,7 +599,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private bool AddChildToLeaf(int nodeBitPos, BitString keyBits, int keyBitIndex, long value, List<int> ancestors)
+    private bool AddChildToLeaf(int nodeBitPos, ref ReadOnlyBitString keyBits, int keyBitIndex, long value, List<int> ancestors)
     {
         // Read current leaf node
         var (hasValue, _, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
@@ -614,14 +640,14 @@ public class FlatTrie : ITrie
         if (nextBit == false)
         {
             // New child goes left
-            WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
+            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
             WriteDeadEnd(ref writer);
         }
         else
         {
             // New child goes right
             WriteDeadEnd(ref writer);
-            WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
+            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
         }
 
         UpdateAncestorSizes(ancestors, delta);
@@ -629,7 +655,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private bool ReplaceDeadEnd(int deadEndPos, BitString keyBits, int keyBitIndex, long value, List<int> ancestors)
+    private bool ReplaceDeadEnd(int deadEndPos, ref ReadOnlyBitString keyBits, int keyBitIndex, long value, List<int> ancestors)
     {
         int remainingKeyLen = keyBits.Length - keyBitIndex;
         int newNodeSize = CalculateNodeSize(true, false, remainingKeyLen);
@@ -642,7 +668,7 @@ public class FlatTrie : ITrie
             return false;
 
         var writer = new BitArrayWriter(_buffer, deadEndPos);
-        WriteNewKeyAsChild(ref writer, keyBits, keyBitIndex, remainingKeyLen, value, newNodeSize);
+        WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newNodeSize);
 
         UpdateAncestorSizes(ancestors, delta);
 
@@ -817,8 +843,6 @@ public class FlatTrie : ITrie
             int currentSize = ReadSize(ref reader);
             int newSize = currentSize + delta;
 
-            // Since we always use fixed 18-bit encoding,
-            // updates always fit in place - no rebuild needed
             var writer = new BitArrayWriter(_buffer, sizePos);
             WriteSize(ref writer, newSize);
         }
@@ -844,11 +868,16 @@ public class FlatTrie : ITrie
         if (string.IsNullOrEmpty(key))
             return;
 
+        int byteCount = Encoding.UTF8.GetByteCount(key);
+        int uintCount = (byteCount + 3) / 4;
+        Span<uint> keyBuffer = stackalloc uint[uintCount];
+        var keyBits = EncodeKey(key, byteCount, keyBuffer);
+
         // Find the node and clear HasValue
-        DeleteInternal(KeyToBits(key), 0, 0);
+        DeleteInternal(ref keyBits, 0, 0);
     }
 
-    private bool DeleteInternal(BitString keyBits, int keyBitIndex, int nodeBitPos)
+    private bool DeleteInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos)
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
@@ -866,7 +895,7 @@ public class FlatTrie : ITrie
         if (prefixLength > 0)
         {
             var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
-            var keyView = keyBits.Slice(keyBitIndex, prefixLength).AsReadOnly();
+            var keyView = keyBits.Slice(keyBitIndex, prefixLength);
             int matchedBits = prefixView.CommonPrefixLength(ref keyView);
 
             if (matchedBits < prefixLength)
@@ -902,9 +931,9 @@ public class FlatTrie : ITrie
         var (leftChildPos, rightChildPos, _) = CalculateChildPositions(ref reader);
 
         if (nextBit == false)
-            return DeleteInternal(keyBits, keyBitIndex, leftChildPos);
+            return DeleteInternal(ref keyBits, keyBitIndex, leftChildPos);
         else
-            return DeleteInternal(keyBits, keyBitIndex, rightChildPos);
+            return DeleteInternal(ref keyBits, keyBitIndex, rightChildPos);
     }
 
     public void Save(string filename)
