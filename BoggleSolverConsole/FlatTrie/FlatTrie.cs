@@ -402,17 +402,13 @@ public class FlatTrie : ITrie
         return true;
     }
 
+    // Upgrade an internal node to have a value, shifting bits as needed
     private bool RewriteNodeWithValue(int nodeBitPos, long value, List<int> ancestors)
     {
         // Read current node
         var (hasValue, hasChildren, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
-        var prefixBits = CopyBitsToBuffer(reader.BitPosition, prefixLength);
-
-        // Calculate new size (adding 64 bits for value)
-        int childrenSize = hasChildren ? (oldSize - (reader.BitPosition + prefixLength - nodeBitPos)) : 0;
-        int newSize = CalculateNodeSize(true, hasChildren, prefixLength, childrenSize);
-
-        int delta = newSize - oldSize;
+        if (hasValue) throw new InvalidOperationException("Node already has value");
+        int delta = 64; // size of value in bits
 
         // Shift everything after this node
         if (!ShiftBits(nodeBitPos + oldSize, delta))
@@ -420,10 +416,12 @@ public class FlatTrie : ITrie
 
         // Rewrite node with value
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        var prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
-        WriteNodeHeader(ref writer, true, hasChildren, newSize, ref prefix);
+        writer.WriteBit(true); // HasValue
+        writer.WriteBit(hasChildren); //or skip, because unchanged
+        WriteSize(ref writer, oldSize + delta);
+        writer.Seek(reader.BitPosition + prefixLength); //skip prefix
 
-        // Write value
+        // Write the new value
         writer.WriteLong(value);
 
         // Children were already shifted, and now follow naturally

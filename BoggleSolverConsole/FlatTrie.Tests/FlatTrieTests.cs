@@ -363,9 +363,9 @@ public class FlatTrieTests
         // Fill the trie until it's nearly full
         // Use unique suffixes (not prefixes) to make the trie grow faster
         var fillTimer = Stopwatch.StartNew();
-        for (int i = 0; i < 10000; i++)
+        for (int i = 0; i < 3000; i++)
         {
-            string key = $"k{i:D6}";
+            string key = $"k{3000-i}"; // variable-length key that will promote internal nodes to value nodes
             long value = i * 100;
 
             bool written = trie.TryWrite(key, value);
