@@ -9,9 +9,10 @@ public class FlatTrieBenchmarks
 {
     private string[] _randomOrderKeys = null!;
     private string[] _sequentialKeys = null!;
+    private string[] _guidKeys = null!;
     private FlatTrie _prefilledTrie = null!;
     private Dictionary<string, long> _prefilledValues = null!;
-
+    
     [GlobalSetup]
     public void Setup()
     {
@@ -19,11 +20,12 @@ public class FlatTrieBenchmarks
         const int keyCount = 2340;
         _randomOrderKeys = new string[keyCount];
         _sequentialKeys = new string[keyCount];
-
+        _guidKeys = new string[keyCount];
         for (int i = 0; i < keyCount; i++)
         {
             _randomOrderKeys[i] = $"k{i:D6}";
             _sequentialKeys[i] = $"k{i:D6}";
+            _guidKeys[i] = Guid.NewGuid().ToString("N");
         }
 
         // Shuffle with fixed seed for reproducibility
@@ -72,6 +74,21 @@ public class FlatTrieBenchmarks
         for (int i = 0; i < _sequentialKeys.Length; i++)
         {
             if (trie.TryWrite(_sequentialKeys[i], i * 100))
+                written++;
+        }
+
+        return written;
+    }
+
+    [Benchmark]
+    public int GuidWrites()
+    {
+        var trie = new FlatTrie();
+        int written = 0;
+
+        for (int i = 0; i < _guidKeys.Length; i++)
+        {
+            if (trie.TryWrite(_guidKeys[i], i * 100))
                 written++;
         }
 

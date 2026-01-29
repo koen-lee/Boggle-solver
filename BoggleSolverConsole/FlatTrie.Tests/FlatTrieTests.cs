@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -433,6 +434,39 @@ public class FlatTrieTests
         }
 
         // Write in random order
+        WriteAndVerifyKeys(trie, keys);
+    }
+    
+    /// <summary>
+    /// GUIDs are long and random, making them a worst-case scenario for trie performance.
+    /// </summary>
+    [Fact]
+    public void GuidWrites_Performance()
+    {
+        var trie = new FlatTrie();
+
+        // Generate keys 0-2340 (same count as ascending test)
+        const int keyCount = 2340;
+        var keys = new string[keyCount];
+        for (int i = 0; i < keyCount; i++)
+        {
+            keys[i] = Guid.NewGuid().ToString("N");
+        }
+
+        // Shuffle with fixed seed for reproducibility
+        var random = new Random(12345);
+        for (int i = keys.Length - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            (keys[i], keys[j]) = (keys[j], keys[i]);
+        }
+
+        // Write in random order
+        WriteAndVerifyKeys(trie, keys);
+    }
+
+    private void WriteAndVerifyKeys( FlatTrie trie, string[] keys,[CallerMemberName] string callerName = "")
+    {
         var fillTimer = Stopwatch.StartNew();
         var writtenKeys = new Dictionary<string, long>();
         for (int i = 0; i < keys.Length; i++)
@@ -450,7 +484,7 @@ public class FlatTrieTests
         }
         fillTimer.Stop();
 
-        _output.WriteLine($"[RandomOrderWrites] Keys written: {writtenKeys.Count}");
+        _output.WriteLine($"[{callerName}] Keys written: {writtenKeys.Count}");
         _output.WriteLine($"Fill time: {fillTimer.ElapsedMilliseconds} ms");
 
         // Verify all keys readable
