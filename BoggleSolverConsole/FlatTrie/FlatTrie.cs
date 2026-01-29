@@ -438,11 +438,8 @@ public class FlatTrie : ITrie
         VarInt.Write(ref writer, matchedBits);
 
         // Write matched prefix
-        var matchedPrefixReader = new BitArrayReader(oldPrefixBits);
-        for (int i = 0; i < matchedBits; i++)
-        {
-            writer.WriteBit(matchedPrefixReader.ReadBit());
-        }
+        var  matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
+        writer.WriteBitString(ref matchedPrefix);
 
         // Write children in order (left then right)
         if (oldDivergeBit == false)
@@ -476,11 +473,8 @@ public class FlatTrie : ITrie
         VarInt.Write(ref writer, prefixLength);
 
         // Write remaining prefix
-        var prefixReader = new BitArrayReader(prefixBits, prefixStartBit);
-        for (int i = 0; i < prefixLength; i++)
-        {
-            writer.WriteBit(prefixReader.ReadBit());
-        }
+        var prefix = ReadOnlyBitString.Wrap(prefixBits).Slice(prefixStartBit, prefixLength);
+        writer.WriteBitString(ref prefix);
 
         if (hasValue)
             writer.WriteLong(value);
@@ -488,11 +482,8 @@ public class FlatTrie : ITrie
         // Copy children data if present
         if (hasChildren && childrenData != null && childrenSize > 0)
         {
-            var childReader = new BitArrayReader(childrenData);
-            for (int i = 0; i < childrenSize; i++)
-            {
-                writer.WriteBit(childReader.ReadBit());
-            }
+            var children = ReadOnlyBitString.Wrap(childrenData, childrenSize);
+            writer.WriteBitString(ref children);
         }
     }
 
@@ -504,10 +495,7 @@ public class FlatTrie : ITrie
         VarInt.Write(ref writer, prefixLength);
 
         // Write remaining key bits as prefix
-        for (int i = 0; i < prefixLength; i++)
-        {
-            writer.WriteBit(keyBits[startIndex + i]);
-        }
+        writer.WriteBitString(keyBits.Slice(startIndex, prefixLength));
 
         // Write value
         writer.WriteLong(value);
@@ -571,11 +559,8 @@ public class FlatTrie : ITrie
         VarInt.Write(ref writer, matchedBits);
 
         // Write matched prefix (the new key's bits)
-        var matchedPrefixReader = new BitArrayReader(oldPrefixBits);
-        for (int i = 0; i < matchedBits; i++)
-        {
-            writer.WriteBit(matchedPrefixReader.ReadBit());
-        }
+        var matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
+        writer.WriteBitString(ref matchedPrefix);
 
         // Write new value
         writer.WriteLong(newValue);
@@ -641,11 +626,8 @@ public class FlatTrie : ITrie
         WriteSize(ref writer, newSize);
         VarInt.Write(ref writer, prefixLength);
 
-        var prefixReader = new BitArrayReader(prefixBits);
-        for (int i = 0; i < prefixLength; i++)
-        {
-            writer.WriteBit(prefixReader.ReadBit());
-        }
+        var prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
+        writer.WriteBitString(ref prefix);
 
         if (hasValue)
         {

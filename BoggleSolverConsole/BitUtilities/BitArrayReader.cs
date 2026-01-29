@@ -99,18 +99,6 @@ public ref struct BitArrayReader
     }
 
     /// <summary>
-    /// Peek at the next bits without advancing the position.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public uint PeekBits(int bitCount)
-    {
-        int savedPosition = _bitPosition;
-        uint result = ReadBits(bitCount);
-        _bitPosition = savedPosition;
-        return result;
-    }
-
-    /// <summary>
     /// Peek at the next bit without advancing the position.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -119,13 +107,6 @@ public ref struct BitArrayReader
         int uintIndex = _bitPosition / 32;
         int bitInUint = _bitPosition % 32;
         return (_backing[uintIndex] & (1u << bitInUint)) != 0;
-    }
-
-    public ReadOnlyBitString ReadBitString(int length)
-    {
-        ReadOnlyBitString result = ReadOnlyBitString.Wrap(_backing);
-        result = result.Slice(_bitPosition, length);
-        return result;
     }
 
     /// <summary>
