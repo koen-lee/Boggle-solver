@@ -28,12 +28,6 @@ public class FlatTrie : ITrie
     /// </summary>
     private int _usedBits = 0;
 
-    /// <summary>
-    /// Flag indicating sizes may be stale and need recalculation.
-    /// No longer used after switching to fixed-size VarInt for sizes.
-    /// </summary>
-    private bool _sizesStale = false;
-
     public FlatTrie()
     {
         // Buffer starts as all zeros, which is a dead end (empty trie)
@@ -45,8 +39,6 @@ public class FlatTrie : ITrie
 
         if (string.IsNullOrEmpty(key))
             return false;
-
-        RebuildIfStale();
 
         // Convert key to bits
         byte[] keyBytes = Encoding.UTF8.GetBytes(key);
@@ -117,31 +109,16 @@ public class FlatTrie : ITrie
         bool nextBit = keyBits[keyBitIndex];
         keyBitIndex++;
 
-        // Read left child info to determine positions
-        int leftChildPos = reader.BitPosition;
-        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
-
-        int rightChildPos;
-        if (leftIsDeadEnd)
-        {
-            rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
-        }
-        else
-        {
-            int leftSize = ReadNodeSize(leftChildPos);
-            rightChildPos = leftChildPos + leftSize;
-        }
+        var (leftChildPos, rightChildPos, leftIsDeadEnd) = CalculateChildPositions(ref reader);
 
         if (nextBit == false)
         {
-            // Go left
             if (leftIsDeadEnd)
                 return false;
             return TryReadInternal(keyBits, keyBitIndex, leftChildPos, out value);
         }
         else
         {
-            // Go right
             return TryReadInternal(keyBits, keyBitIndex, rightChildPos, out value);
         }
     }
@@ -163,8 +140,6 @@ public class FlatTrie : ITrie
     {
         if (string.IsNullOrEmpty(key))
             return false;
-
-        RebuildIfStale();
 
         // Convert key to bits
         byte[] keyBytes = Encoding.UTF8.GetBytes(key);
@@ -285,39 +260,21 @@ public class FlatTrie : ITrie
         bool nextBit = keyBits[keyBitIndex];
         keyBitIndex++;
 
-        int leftChildPos = reader.BitPosition;
-        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
-
-        int rightChildPos;
-        if (leftIsDeadEnd)
-        {
-            rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
-        }
-        else
-        {
-            int leftSize = ReadNodeSize(leftChildPos);
-            rightChildPos = leftChildPos + leftSize;
-        }
+        var (leftChildPos, rightChildPos, leftIsDeadEnd) = CalculateChildPositions(ref reader);
 
         if (nextBit == false)
         {
-            // Go left
             if (leftIsDeadEnd)
-            {
                 return ReplaceDeadEnd(leftChildPos, keyBits, keyBitIndex, value, ancestors);
-            }
             return TryWriteInternal(keyBits, keyBitIndex, leftChildPos, value, ancestors);
         }
         else
         {
-            // Go right
             reader.Seek(rightChildPos);
             (_, _, bool rightIsDeadEnd) = ReadNodeHeader(ref reader);
 
             if (rightIsDeadEnd)
-            {
                 return ReplaceDeadEnd(rightChildPos, keyBits, keyBitIndex, value, ancestors);
-            }
             return TryWriteInternal(keyBits, keyBitIndex, rightChildPos, value, ancestors);
         }
     }
@@ -928,88 +885,6 @@ public class FlatTrie : ITrie
     }
 
     /// <summary>
-    /// Rebuild the trie to fix stale sizes.
-    /// Collects all key-value pairs and reinserts them.
-    /// </summary>
-    private void RebuildIfStale()
-    {
-        if (!_sizesStale)
-            return;
-
-        // Collect all key-value pairs
-        var entries = new List<(string key, long value)>();
-        CollectEntries(0, new List<bool>(), entries);
-
-        // Clear buffer
-        Array.Clear(_buffer);
-        _usedBits = 0;
-        _sizesStale = false;
-
-        // Reinsert all entries
-        foreach (var (key, value) in entries)
-        {
-            TryWrite(key, value);
-        }
-    }
-
-    /// <summary>
-    /// Collect all key-value pairs from the trie.
-    /// </summary>
-    private void CollectEntries(int nodeBitPos, List<bool> keyBits, List<(string key, long value)> entries)
-    {
-        var reader = new BitArrayReader(_buffer, nodeBitPos);
-        bool hasValue = reader.ReadBit();
-        bool hasChildren = reader.ReadBit();
-
-        if (!hasValue && !hasChildren)
-            return; // Dead end
-
-        VarInt.ReadSize(ref reader); // Size (may be stale, but we don't need it for collection)
-        int prefixLength = VarInt.Read(ref reader);
-
-        // Read and append prefix bits
-        for (int i = 0; i < prefixLength; i++)
-        {
-            keyBits.Add(reader.ReadBit());
-        }
-
-        if (hasValue)
-        {
-            uint low = reader.ReadBits(32);
-            uint high = reader.ReadBits(32);
-            long value = (long)low | ((long)high << 32);
-
-            // Convert bits to string
-            string key = BitsToString(keyBits);
-            if (!string.IsNullOrEmpty(key))
-            {
-                entries.Add((key, value));
-            }
-        }
-
-        if (hasChildren)
-        {
-            // Left child (bit 0)
-            int leftChildPos = reader.BitPosition;
-            keyBits.Add(false);
-            CollectEntries(leftChildPos, keyBits, entries);
-            keyBits.RemoveAt(keyBits.Count - 1);
-
-            // Find right child position by calculating left size
-            int leftSize = CalculateNodeSizeSimple(leftChildPos);
-            int rightChildPos = leftChildPos + leftSize;
-
-            // Right child (bit 1)
-            keyBits.Add(true);
-            CollectEntries(rightChildPos, keyBits, entries);
-            keyBits.RemoveAt(keyBits.Count - 1);
-        }
-
-        // Remove prefix bits we added
-        keyBits.RemoveRange(keyBits.Count - prefixLength, prefixLength);
-    }
-
-    /// <summary>
     /// Simple size calculation that doesn't rely on stored sizes.
     /// </summary>
     private int CalculateNodeSizeSimple(int nodeBitPos)
@@ -1071,6 +946,21 @@ public class FlatTrie : ITrie
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Calculate child positions by reading the left child header to determine its size.
+    /// </summary>
+    private (int leftPos, int rightPos, bool leftIsDead) CalculateChildPositions(ref BitArrayReader reader)
+    {
+        int leftChildPos = reader.BitPosition;
+        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
+
+        int rightChildPos = leftIsDeadEnd
+            ? leftChildPos + FlatTrieNode.DeadEndSize
+            : leftChildPos + ReadNodeSize(leftChildPos);
+
+        return (leftChildPos, rightChildPos, leftIsDeadEnd);
     }
 
     /// <summary>
@@ -1146,29 +1036,12 @@ public class FlatTrie : ITrie
         bool nextBit = keyBits[keyBitIndex];
         keyBitIndex++;
 
-        int leftChildPos = reader.BitPosition;
-
-        var (_, _, leftIsDeadEnd) = ReadNodeHeader(ref reader);
-
-        int rightChildPos;
-        if (leftIsDeadEnd)
-        {
-            rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
-        }
-        else
-        {
-            int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
-            rightChildPos = leftChildPos + leftSize;
-        }
+        var (leftChildPos, rightChildPos, _) = CalculateChildPositions(ref reader);
 
         if (nextBit == false)
-        {
             return DeleteInternal(keyBits, keyBitIndex, leftChildPos);
-        }
         else
-        {
             return DeleteInternal(keyBits, keyBitIndex, rightChildPos);
-        }
     }
 
     public void Save(string filename)
@@ -1248,19 +1121,7 @@ public class FlatTrie : ITrie
             if (hasValue)
                 reader.Skip(64);
 
-            int leftChildPos = reader.BitPosition;
-            (_, _, var leftIsDeadEnd) = ReadNodeHeader(ref reader);
-
-            int rightChildPos;
-            if (leftIsDeadEnd)
-            {
-                rightChildPos = leftChildPos + FlatTrieNode.DeadEndSize;
-            }
-            else
-            {
-                int leftSize = ReadNodeSize(leftChildPos); // Handles stale sizes
-                rightChildPos = leftChildPos + leftSize;
-            }
+            var (leftChildPos, rightChildPos, _) = CalculateChildPositions(ref reader);
 
             CollectStats(leftChildPos, stats);
             CollectStats(rightChildPos, stats);
