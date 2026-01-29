@@ -75,6 +75,15 @@ public class FlatTrie : ITrie
     private static BitString KeyToBits(string key)
         => BitString.FromBytes(Encoding.UTF8.GetBytes(key));
 
+    private static void WriteNodeHeader(ref BitArrayWriter writer, bool hasValue, bool hasChildren, int nodeSize, ref ReadOnlyBitString prefix)
+    {
+        writer.WriteBit(hasValue);
+        writer.WriteBit(hasChildren);
+        WriteSize(ref writer, nodeSize);
+        VarInt.Write(ref writer, prefix.Length);
+        writer.WriteBitString(ref prefix);
+    }
+
     private uint[] CopyBitsToBuffer(int bitPosition, int bitCount)
     {
         var slice = ReadOnlyBitString.Wrap(_buffer).Slice(bitPosition, bitCount);
@@ -219,11 +228,8 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer);
 
         // Write the node
-        writer.WriteBit(true);  // HasValue
-        writer.WriteBit(false); // HasChildren
-        WriteSize(ref writer, nodeSize);
-        VarInt.Write(ref writer, prefixLength);
-        writer.WriteBitString(keyBits);
+        var prefix = keyBits.AsReadOnly();
+        WriteNodeHeader(ref writer, true, false, nodeSize, ref prefix);
         writer.WriteLong(value);
 
         _usedBits = nodeSize;
@@ -365,14 +371,8 @@ public class FlatTrie : ITrie
 
         // Rewrite node with value
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        writer.WriteBit(true);  // HasValue
-        writer.WriteBit(hasChildren);
-        WriteSize(ref writer, newSize);
-        VarInt.Write(ref writer, prefixLength);
-
-        // Write prefix
         var prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
-        writer.WriteBitString(ref prefix);
+        WriteNodeHeader(ref writer, true, hasChildren, newSize, ref prefix);
 
         // Write value
         writer.WriteLong(value);
@@ -432,14 +432,8 @@ public class FlatTrie : ITrie
 
         // Write new parent node
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        writer.WriteBit(false); // HasValue
-        writer.WriteBit(true);  // HasChildren
-        WriteSize(ref writer, newParentSize);
-        VarInt.Write(ref writer, matchedBits);
-
-        // Write matched prefix
-        var  matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
-        writer.WriteBitString(ref matchedPrefix);
+        var matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
+        WriteNodeHeader(ref writer, false, true, newParentSize, ref matchedPrefix);
 
         // Write children in order (left then right)
         if (oldDivergeBit == false)
@@ -467,14 +461,8 @@ public class FlatTrie : ITrie
         uint[] prefixBits, int prefixStartBit, int prefixLength, long value,
         uint[]? childrenData, int childrenSize, int totalSize)
     {
-        writer.WriteBit(hasValue);
-        writer.WriteBit(hasChildren);
-        WriteSize(ref writer, totalSize);
-        VarInt.Write(ref writer, prefixLength);
-
-        // Write remaining prefix
         var prefix = ReadOnlyBitString.Wrap(prefixBits).Slice(prefixStartBit, prefixLength);
-        writer.WriteBitString(ref prefix);
+        WriteNodeHeader(ref writer, hasValue, hasChildren, totalSize, ref prefix);
 
         if (hasValue)
             writer.WriteLong(value);
@@ -489,13 +477,8 @@ public class FlatTrie : ITrie
 
     private void WriteNewKeyAsChild(ref BitArrayWriter writer, BitString keyBits, int startIndex, int prefixLength, long value, int totalSize)
     {
-        writer.WriteBit(true);  // HasValue
-        writer.WriteBit(false); // HasChildren
-        WriteSize(ref writer, totalSize);
-        VarInt.Write(ref writer, prefixLength);
-
-        // Write remaining key bits as prefix
-        writer.WriteBitString(keyBits.Slice(startIndex, prefixLength));
+        var prefix = keyBits.Slice(startIndex, prefixLength).AsReadOnly();
+        WriteNodeHeader(ref writer, true, false, totalSize, ref prefix);
 
         // Write value
         writer.WriteLong(value);
@@ -553,14 +536,8 @@ public class FlatTrie : ITrie
 
         // Write new parent node
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        writer.WriteBit(true);  // HasValue (new key's value)
-        writer.WriteBit(true);  // HasChildren
-        WriteSize(ref writer, newParentSize);
-        VarInt.Write(ref writer, matchedBits);
-
-        // Write matched prefix (the new key's bits)
         var matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
-        writer.WriteBitString(ref matchedPrefix);
+        WriteNodeHeader(ref writer, true, true, newParentSize, ref matchedPrefix);
 
         // Write new value
         writer.WriteLong(newValue);
@@ -621,13 +598,8 @@ public class FlatTrie : ITrie
 
         // Rewrite node
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        writer.WriteBit(hasValue);
-        writer.WriteBit(true); // HasChildren now
-        WriteSize(ref writer, newSize);
-        VarInt.Write(ref writer, prefixLength);
-
         var prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
-        writer.WriteBitString(ref prefix);
+        WriteNodeHeader(ref writer, hasValue, true, newSize, ref prefix);
 
         if (hasValue)
         {

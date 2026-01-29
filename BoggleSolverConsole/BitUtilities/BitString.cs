@@ -153,6 +153,16 @@ public readonly struct BitString
     }
 
     /// <summary>
+    /// Convert to ReadOnlyBitString viewing the same bits.
+    /// </summary>
+    public ReadOnlyBitString AsReadOnly()
+    {
+        if (_backing == null || _bitLength == 0)
+            return ReadOnlyBitString.Empty;
+        return ReadOnlyBitString.Wrap(_backing).Slice(_bitOffset, _bitLength);
+    }
+
+    /// <summary>
     /// Extract a slice as BitPrefix using efficient bit operations.
     /// Handles extraction spanning 1-2 uints without bit-by-bit iteration.
     /// </summary>
