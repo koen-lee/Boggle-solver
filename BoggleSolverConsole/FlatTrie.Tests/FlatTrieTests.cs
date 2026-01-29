@@ -452,17 +452,19 @@ public class FlatTrieTests
         {
             keys[i] = Guid.NewGuid().ToString("N");
         }
-
-        // Shuffle with fixed seed for reproducibility
-        var random = new Random(12345);
-        for (int i = keys.Length - 1; i > 0; i--)
-        {
-            int j = random.Next(i + 1);
-            (keys[i], keys[j]) = (keys[j], keys[i]);
-        }
-
-        // Write in random order
+     
         WriteAndVerifyKeys(trie, keys);
+    }
+
+    /// <summary>
+    /// Filenames are long and repetitive, making them a good case for trie performance.
+    /// </summary>
+    [Fact]
+    public void FilenameWrites_Performance()
+    {
+        var trie = new FlatTrie();
+        var lines  = File.ReadAllLines("FileList.txt");
+        WriteAndVerifyKeys(trie, lines);
     }
 
     private void WriteAndVerifyKeys( FlatTrie trie, string[] keys,[CallerMemberName] string callerName = "")

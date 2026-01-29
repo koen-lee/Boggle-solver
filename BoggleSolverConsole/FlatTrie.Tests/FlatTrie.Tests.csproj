@@ -32,5 +32,10 @@
     <ProjectReference Include="..\FlatTrie\FlatTrie.csproj" />
     <ProjectReference Include="..\BitUtilities\BitUtilities.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="FileList.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>

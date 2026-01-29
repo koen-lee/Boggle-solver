@@ -11,8 +11,13 @@ public class FlatTrieBenchmarks
     private string[] _sequentialKeys = null!;
     private string[] _guidKeys = null!;
     private FlatTrie _prefilledTrie = null!;
+    private string[] _fileKeys = null!;
     private Dictionary<string, long> _prefilledValues = null!;
-    
+    private FlatTrie _prefilledGuidTrie;
+    private Dictionary<string, long> _prefilledGuidValues;
+    private FlatTrie _prefilledFileTrie;
+    private Dictionary<string, long> _prefilledFileValues;
+
     [GlobalSetup]
     public void Setup()
     {
@@ -50,15 +55,31 @@ public class FlatTrieBenchmarks
         }
 
         // Pre-fill a trie with Guids for read benchmarks with longer, random keys
-        _prefilledTrie = new FlatTrie();
-        _prefilledValues = new Dictionary<string, long>();
+        _prefilledGuidTrie = new FlatTrie();
+        _prefilledGuidValues = new Dictionary<string, long>();
         for (int i = 0; i < _guidKeys.Length; i++)
         {
             string key = _guidKeys[i];
             long value = i * 100;
-            if (_prefilledTrie.TryWrite(key, value))
+            if (_prefilledGuidTrie.TryWrite(key, value))
             {
-                _prefilledValues[key] = value;
+                _prefilledGuidValues[key] = value;
+            }
+        }
+
+        
+        // Pre-fill a trie with Guids for read benchmarks with longer, random keys
+        _prefilledFileTrie = new FlatTrie();
+        _prefilledFileValues = new Dictionary<string, long>();
+        
+        _fileKeys = File.ReadAllLines("FileList.txt");
+        for (int i = 0; i < _fileKeys.Length; i++)
+        {
+            string key = _fileKeys[i];
+            long value = i * 100;
+            if (_prefilledFileTrie.TryWrite(key, value))
+            {
+                _prefilledFileValues[key] = value;
             }
         }
     }
@@ -72,6 +93,22 @@ public class FlatTrieBenchmarks
         for (int i = 0; i < _randomOrderKeys.Length; i++)
         {
             if (trie.TryWrite(_randomOrderKeys[i], i * 100))
+                written++;
+        }
+
+        return written;
+    }
+
+    
+    [Benchmark]
+    public int RandomOrderWrites_Dictionary()
+    {
+        var dict = new Dictionary<string, long>();
+        int written = 0;
+
+        for (int i = 0; i < _randomOrderKeys.Length; i++)
+        {
+            if (dict.TryAdd(_randomOrderKeys[i], i * 100))
                 written++;
         }
 
@@ -109,6 +146,21 @@ public class FlatTrieBenchmarks
     }
 
     [Benchmark]
+    public int FileWrites()
+    {
+        var trie = new FlatTrie();
+        int written = 0;
+
+        for (int i = 0; i < _fileKeys.Length; i++)
+        {
+            if (trie.TryWrite(_fileKeys[i], i * 100))
+                written++;
+        }
+
+        return written;
+    }
+
+    [Benchmark]
     public int ReadAllKeys()
     {
         int found = 0;
@@ -121,12 +173,36 @@ public class FlatTrieBenchmarks
     }
 
     [Benchmark]
+    public int ReadAllKeys_Dictionary()
+    {
+        int found = 0;
+        foreach (var key in _randomOrderKeys)
+        {
+            if (_prefilledValues.TryGetValue(key, out _))
+                found++;
+        }
+        return found;
+    }
+
+    [Benchmark]
     public int ReadAllGuidKeys()
     {
         int found = 0;
-        foreach (var key in _prefilledValues.Keys)
+        foreach (var key in _prefilledGuidValues.Keys)
         {
-            if (_prefilledTrie.TryRead(key, out _))
+            if (_prefilledGuidTrie.TryRead(key, out _))
+                found++;
+        }
+        return found;
+    }
+
+    [Benchmark]
+    public int ReadAllFileKeys()
+    {
+        int found = 0;
+        foreach (var key in _prefilledFileValues.Keys)
+        {
+            if (_prefilledFileTrie.TryRead(key, out _) )
                 found++;
         }
         return found;
