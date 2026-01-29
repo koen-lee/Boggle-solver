@@ -431,6 +431,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
+// TODO: do not pass ancestors, return delta instead and update sizes when bubbling back up the stack
     private bool SplitNode(int nodeBitPos, ref ReadOnlyBitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
     {
         // Read current node completely first
@@ -438,6 +439,13 @@ public class FlatTrie : ITrie
         var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
         reader.Skip(oldPrefixLength);
         long oldValue = oldHasValue ? reader.ReadLong() : 0;
+
+// TODO: improve efficiency here by avoiding copying bits to buffer
+// 1. calculate the new prefix size
+// 2. calculate size of new node
+// 3. check space
+// 4. shift bits, don't copy bits to buffer
+// 5. write new node
 
         // Save children data if present (BEFORE any shifting)
         int childrenStartPos = reader.BitPosition;
@@ -532,6 +540,17 @@ public class FlatTrie : ITrie
         // - One child contains old content (remaining prefix + old value + old children)
         // - Other child is dead end
 
+
+// TODO: improve efficiency here by avoiding copying bits to buffer
+// 1. calculate the new prefix size
+// 2. calculate size of new node
+// 3. check space
+// 4. shift bits, don't copy any bits to buffer
+// 5. write new node
+// If we do it perfectly, we can start the shift exactly where the prefix diverges 
+// so we don't even need to copy the prefix bits
+
+
         // Read current node
         var (oldHasValue, oldHasChildren, oldSize, oldPrefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
         var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
@@ -601,11 +620,10 @@ public class FlatTrie : ITrie
     {
         // Read current leaf node
         var (hasValue, _, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
-        var prefixBits = CopyBitsToBuffer(reader.BitPosition, prefixLength);
         reader.Skip(prefixLength);
 
         long existingValue = hasValue ? reader.ReadLong() : 0;
-
+        // reader is now at end of node
         // The next bit determines which child
         bool nextBit = keyBits[keyBitIndex];
         keyBitIndex++;
@@ -625,14 +643,11 @@ public class FlatTrie : ITrie
             return false;
 
         // Rewrite node
-        var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        var prefix = ReadOnlyBitString.Wrap(prefixBits, prefixLength);
-        WriteNodeHeader(ref writer, hasValue, true, newSize, ref prefix);
-
-        if (hasValue)
-        {
-            writer.WriteLong(existingValue);
-        }
+        var writer = new BitArrayWriter(_buffer, nodeBitPos); 
+        writer.WriteBit(hasValue);
+        writer.WriteBit(true); // HasChildren
+        WriteSize(ref writer, newSize);
+        writer.Seek(reader.BitPosition); // Skip value and prefix
 
         // Write children
         if (nextBit == false)
@@ -833,11 +848,9 @@ public class FlatTrie : ITrie
 
         foreach (int nodePos in ancestors)
         {
-            var reader = new BitArrayReader(_buffer, nodePos);
-            reader.ReadBit(); // HasValue
-            reader.ReadBit(); // HasChildren
-
-            int sizePos = reader.BitPosition;
+            int sizePos = nodePos + 2; // after HasValue and HasChildren bits
+            var reader = new BitArrayReader(_buffer, sizePos);
+            
             int currentSize = ReadSize(ref reader);
             int newSize = currentSize + delta;
 
