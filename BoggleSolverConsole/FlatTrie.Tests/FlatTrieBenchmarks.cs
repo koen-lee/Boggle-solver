@@ -48,6 +48,19 @@ public class FlatTrieBenchmarks
                 _prefilledValues[key] = value;
             }
         }
+
+        // Pre-fill a trie with Guids for read benchmarks with longer, random keys
+        _prefilledTrie = new FlatTrie();
+        _prefilledValues = new Dictionary<string, long>();
+        for (int i = 0; i < _guidKeys.Length; i++)
+        {
+            string key = _guidKeys[i];
+            long value = i * 100;
+            if (_prefilledTrie.TryWrite(key, value))
+            {
+                _prefilledValues[key] = value;
+            }
+        }
     }
 
     [Benchmark]
@@ -97,6 +110,18 @@ public class FlatTrieBenchmarks
 
     [Benchmark]
     public int ReadAllKeys()
+    {
+        int found = 0;
+        foreach (var key in _prefilledValues.Keys)
+        {
+            if (_prefilledTrie.TryRead(key, out _))
+                found++;
+        }
+        return found;
+    }
+
+    [Benchmark]
+    public int ReadAllGuidKeys()
     {
         int found = 0;
         foreach (var key in _prefilledValues.Keys)
