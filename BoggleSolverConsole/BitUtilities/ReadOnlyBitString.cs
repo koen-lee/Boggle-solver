@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace BitUtilities;
@@ -142,5 +143,79 @@ public readonly ref struct ReadOnlyBitString
         }
 
         return BitPrefix.FromBits(result, length);
+    }
+
+    /// <summary>
+    /// Extract up to 32 bits starting at the given position (relative to this slice).
+    /// Returns the bits as a uint, LSB-first.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private uint GetBits(int start, int count)
+    {
+        int absoluteBitOffset = _bitOffset + start;
+        int uintIndex = absoluteBitOffset / 32;
+        int bitInUint = absoluteBitOffset % 32;
+
+        // Extract bits from first uint
+        uint result = _backing[uintIndex] >> bitInUint;
+
+        // If extraction spans two uints, get remaining bits from next uint
+        if (bitInUint + count > 32 && uintIndex + 1 < _backing.Length)
+        {
+            result |= _backing[uintIndex + 1] << (32 - bitInUint);
+        }
+
+        // Mask to only include count bits
+        if (count < 32)
+        {
+            result &= (1u << count) - 1;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the number of leading bits that match between this and another bit string.
+    /// Uses XOR and TrailingZeroCount for efficient uint-at-a-time comparison.
+    /// </summary>
+    public int CommonPrefixLength(ref ReadOnlyBitString other)
+    {
+        int maxCompare = Math.Min(_bitLength, other._bitLength);
+        if (maxCompare == 0) return 0;
+
+        int compared = 0;
+
+        // Compare 32 bits at a time where possible
+        while (compared + 32 <= maxCompare)
+        {
+            uint a = GetBits(compared, 32);
+            uint b = other.GetBits(compared, 32);
+            uint xor = a ^ b;
+
+            if (xor != 0)
+            {
+                // Found a mismatch - return position of first differing bit
+                return compared + BitOperations.TrailingZeroCount(xor);
+            }
+
+            compared += 32;
+        }
+
+        // Handle remaining bits (less than 32)
+        int remaining = maxCompare - compared;
+        if (remaining > 0)
+        {
+            uint a = GetBits(compared, remaining);
+            uint b = other.GetBits(compared, remaining);
+            uint xor = a ^ b;
+
+            if (xor != 0)
+            {
+                int mismatchPos = BitOperations.TrailingZeroCount(xor);
+                return compared + Math.Min(mismatchPos, remaining);
+            }
+        }
+
+        return maxCompare;
     }
 }

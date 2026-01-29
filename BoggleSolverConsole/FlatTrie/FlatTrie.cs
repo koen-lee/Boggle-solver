@@ -123,23 +123,27 @@ public class FlatTrie : ITrie
         int prefixLength = VarInt.Read(ref reader);
 
         // Match prefix bits against key bits
-        for (int i = 0; i < prefixLength; i++)
+        int keyRemainingBits = keyBits.Length - keyBitIndex;
+        if (keyRemainingBits < prefixLength)
         {
-            if (keyBitIndex >= keyBits.Length)
+            // Key exhausted before prefix - no match
+            return false;
+        }
+
+        if (prefixLength > 0)
+        {
+            var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
+            var keyView = keyBits.Slice(keyBitIndex, prefixLength).AsReadOnly();
+            int matchedBits = prefixView.CommonPrefixLength(ref keyView);
+
+            if (matchedBits < prefixLength)
             {
-                // Key exhausted before prefix - no match
+                // Mismatch within prefix
                 return false;
             }
 
-            bool prefixBit = reader.ReadBit();
-            bool keyBit = keyBits[keyBitIndex];
-
-            if (prefixBit != keyBit)
-            {
-                // Mismatch
-                return false;
-            }
-            keyBitIndex++;
+            reader.Skip(prefixLength);
+            keyBitIndex += prefixLength;
         }
 
         // All key bits matched?
@@ -263,17 +267,16 @@ public class FlatTrie : ITrie
         int prefixLength = VarInt.Read(ref reader);
         int prefixStartPos = reader.BitPosition;
 
-        // Match prefix bits
+        // Match prefix bits using XOR-based comparison
+        int keyRemainingBits = keyBits.Length - keyBitIndex;
+        int bitsToCompare = Math.Min(prefixLength, keyRemainingBits);
         int matchedBits = 0;
-        for (int i = 0; i < prefixLength && keyBitIndex + i < keyBits.Length; i++)
+
+        if (bitsToCompare > 0)
         {
-            bool prefixBit = reader.ReadBit();
-            bool keyBit = keyBits[keyBitIndex + i];
-
-            if (prefixBit != keyBit)
-                break;
-
-            matchedBits++;
+            var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(prefixStartPos, bitsToCompare);
+            var keyView = keyBits.Slice(keyBitIndex, bitsToCompare).AsReadOnly();
+            matchedBits = prefixView.CommonPrefixLength(ref keyView);
         }
 
         // Case 1: Divergence within prefix - need to split
@@ -847,17 +850,22 @@ public class FlatTrie : ITrie
         reader.Skip(SizeFieldBits);
         int prefixLength = VarInt.Read(ref reader);
 
-        // Match prefix
-        for (int i = 0; i < prefixLength; i++)
+        // Match prefix using XOR-based comparison
+        int keyRemainingBits = keyBits.Length - keyBitIndex;
+        if (keyRemainingBits < prefixLength)
+            return false;
+
+        if (prefixLength > 0)
         {
-            if (keyBitIndex >= keyBits.Length)
+            var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
+            var keyView = keyBits.Slice(keyBitIndex, prefixLength).AsReadOnly();
+            int matchedBits = prefixView.CommonPrefixLength(ref keyView);
+
+            if (matchedBits < prefixLength)
                 return false;
 
-            bool prefixBit = reader.ReadBit();
-            if (prefixBit != keyBits[keyBitIndex])
-                return false;
-
-            keyBitIndex++;
+            reader.Skip(prefixLength);
+            keyBitIndex += prefixLength;
         }
 
         // Key fully matched?

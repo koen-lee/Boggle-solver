@@ -196,4 +196,97 @@ public class BitStringTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => bits.ToBitPrefix(0, 33));
     }
+
+    [Fact]
+    public void CommonPrefixLength_IdenticalBits_ReturnsFullLength()
+    {
+        var bits = BitString.FromBytes([0xAB, 0xCD]);
+        var a = bits.AsReadOnly();
+        var b = bits.AsReadOnly();
+
+        Assert.Equal(16, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_CompletelyDifferent_ReturnsZero()
+    {
+        var a = BitString.FromBytes([0x00]).AsReadOnly();
+        var b = BitString.FromBytes([0x01]).AsReadOnly(); // Differs at bit 0
+
+        Assert.Equal(0, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_DifferAtBit4_Returns4()
+    {
+        // 0x0F = 0b00001111 (bits 0-3 are 1, bits 4-7 are 0)
+        // 0x1F = 0b00011111 (bits 0-4 are 1, bit 5 is 0, etc)
+        var a = BitString.FromBytes([0x0F]).AsReadOnly();
+        var b = BitString.FromBytes([0x1F]).AsReadOnly();
+
+        // Differ at bit 4 (first has 0, second has 1)
+        Assert.Equal(4, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_DifferentLengths_ReturnsMinLength()
+    {
+        var short_ = BitString.FromBytes([0xFF]).AsReadOnly();
+        var long_ = BitString.FromBytes([0xFF, 0xFF]).AsReadOnly();
+
+        Assert.Equal(8, short_.CommonPrefixLength(ref long_));
+        Assert.Equal(8, long_.CommonPrefixLength(ref short_));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_SpanningMultipleUints_Works()
+    {
+        // 8 bytes = 64 bits = 2 uints
+        var a = BitString.FromBytes([0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]).AsReadOnly();
+        var b = BitString.FromBytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00]).AsReadOnly();
+
+        // First 32 bits (first uint) match, then differ at bit 32
+        Assert.Equal(32, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_WithSlices_Works()
+    {
+        var a = BitString.FromBytes([0x00, 0xFF]).Slice(8, 8).AsReadOnly();
+        var b = BitString.FromBytes([0xFF]).AsReadOnly();
+
+        Assert.Equal(8, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_EmptyStrings_ReturnsZero()
+    {
+        var a = ReadOnlyBitString.Empty;
+        var b = BitString.FromBytes([0xFF]).AsReadOnly();
+
+        Assert.Equal(0, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_LongStrings_Works()
+    {
+        // 32 bytes = 256 bits = 8 uints - all matching
+        var bytes = new byte[32];
+        Array.Fill(bytes, (byte)0xAA);
+        var a = BitString.FromBytes(bytes).AsReadOnly();
+        var b = BitString.FromBytes(bytes).AsReadOnly();
+
+        Assert.Equal(256, a.CommonPrefixLength(ref b));
+    }
+
+    [Fact]
+    public void CommonPrefixLength_DifferenceInLastPartialChunk_Works()
+    {
+        // 5 bytes = 40 bits, differ at bit 36
+        var a = BitString.FromBytes([0xFF, 0xFF, 0xFF, 0xFF, 0x0F]).AsReadOnly();
+        var b = BitString.FromBytes([0xFF, 0xFF, 0xFF, 0xFF, 0x1F]).AsReadOnly();
+
+        // Bits 32-35 are the same (0xF), bit 36 differs
+        Assert.Equal(36, a.CommonPrefixLength(ref b));
+    }
 }
