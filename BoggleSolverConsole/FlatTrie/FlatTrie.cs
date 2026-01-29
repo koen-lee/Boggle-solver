@@ -30,6 +30,7 @@ public class FlatTrie : ITrie
 
     /// <summary>
     /// Flag indicating sizes may be stale and need recalculation.
+    /// No longer used after switching to fixed-size VarInt for sizes.
     /// </summary>
     private bool _sizesStale = false;
 
@@ -198,7 +199,7 @@ public class FlatTrie : ITrie
         // Write the node
         writer.WriteBit(true);  // HasValue
         writer.WriteBit(false); // HasChildren
-        VarInt.Write(ref writer, nodeSize);
+        VarInt.WriteSize(ref writer, nodeSize);
         VarInt.Write(ref writer, prefixLength);
         writer.WriteBitString(keyBits);
         writer.WriteBits((uint)(value & 0xFFFFFFFF), 32);
@@ -370,7 +371,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(true);  // HasValue
         writer.WriteBit(hasChildren);
-        VarInt.Write(ref writer, newSize);
+        VarInt.WriteSize(ref writer, newSize);
         VarInt.Write(ref writer, prefixLength);
 
         // Write prefix
@@ -457,7 +458,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(false); // HasValue
         writer.WriteBit(true);  // HasChildren
-        VarInt.Write(ref writer, newParentSize);
+        VarInt.WriteSize(ref writer, newParentSize);
         VarInt.Write(ref writer, matchedBits);
 
         // Write matched prefix
@@ -495,7 +496,7 @@ public class FlatTrie : ITrie
     {
         writer.WriteBit(hasValue);
         writer.WriteBit(hasChildren);
-        VarInt.Write(ref writer, totalSize);
+        VarInt.WriteSize(ref writer, totalSize);
         VarInt.Write(ref writer, prefixLength);
 
         // Write remaining prefix
@@ -526,7 +527,7 @@ public class FlatTrie : ITrie
     {
         writer.WriteBit(true);  // HasValue
         writer.WriteBit(false); // HasChildren
-        VarInt.Write(ref writer, totalSize);
+        VarInt.WriteSize(ref writer, totalSize);
         VarInt.Write(ref writer, prefixLength);
 
         // Write remaining key bits as prefix
@@ -613,7 +614,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(true);  // HasValue (new key's value)
         writer.WriteBit(true);  // HasChildren
-        VarInt.Write(ref writer, newParentSize);
+        VarInt.WriteSize(ref writer, newParentSize);
         VarInt.Write(ref writer, matchedBits);
 
         // Write matched prefix (the new key's bits)
@@ -697,7 +698,7 @@ public class FlatTrie : ITrie
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(hasValue);
         writer.WriteBit(true); // HasChildren now
-        VarInt.Write(ref writer, newSize);
+        VarInt.WriteSize(ref writer, newSize);
         VarInt.Write(ref writer, prefixLength);
 
         var prefixReader = new BitArrayReader(prefixBits);
@@ -764,41 +765,143 @@ public class FlatTrie : ITrie
             if (_usedBits + delta > BufferSizeBits)
                 return false;
 
-            // Shift from end to avoid overwriting
-            for (int i = _usedBits - 1; i >= fromBitPos; i--)
-            {
-                int srcUint = i / 32;
-                int srcBit = i % 32;
-                int dstUint = (i + delta) / 32;
-                int dstBit = (i + delta) % 32;
-
-                bool bit = (_buffer[srcUint] & (1u << srcBit)) != 0;
-                if (bit)
-                    _buffer[dstUint] |= (1u << dstBit);
-                else
-                    _buffer[dstUint] &= ~(1u << dstBit);
-            }
+            ShiftBitsRight(fromBitPos, delta);
         }
         else
         {
             // Shrinking - shift left
-            delta = -delta;
-            for (int i = fromBitPos; i < _usedBits; i++)
-            {
-                int srcUint = i / 32;
-                int srcBit = i % 32;
-                int dstUint = (i - delta) / 32;
-                int dstBit = (i - delta) % 32;
-
-                bool bit = (_buffer[srcUint] & (1u << srcBit)) != 0;
-                if (bit)
-                    _buffer[dstUint] |= (1u << dstBit);
-                else
-                    _buffer[dstUint] &= ~(1u << dstBit);
-            }
+            ShiftBitsLeft(fromBitPos, -delta);
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Shift bits right (expand) by delta bits, starting from fromBitPos.
+    /// Uses word-level barrel shift for efficiency.
+    /// Works backwards from end to avoid overwriting source data.
+    /// </summary>
+    private void ShiftBitsRight(int fromBitPos, int delta)
+    {
+        int bitsToMove = _usedBits - fromBitPos;
+        if (bitsToMove <= 0)
+            return;
+
+        // The rotation amount within a word (0-31)
+        int rot = delta & 31;  // delta % 32
+        int wordShift = delta >> 5;  // delta / 32
+
+        // Calculate source and destination word ranges
+        int srcStartWord = fromBitPos >> 5;
+        int srcEndWord = (_usedBits - 1) >> 5;
+        int dstEndWord = (_usedBits - 1 + delta) >> 5;
+
+        if (rot == 0)
+        {
+            // Word-aligned shift - simple word copy backwards
+            for (int srcWord = srcEndWord; srcWord >= srcStartWord; srcWord--)
+            {
+                _buffer[srcWord + wordShift] = _buffer[srcWord];
+            }
+        }
+        else
+        {
+            // Non-aligned shift - each dest word gets bits from two source words
+            // dst[i] = (src[i-wordShift] << rot) | (src[i-wordShift-1] >> (32-rot))
+
+            // Process from end to start
+            for (int dstWord = dstEndWord; dstWord >= srcStartWord + wordShift; dstWord--)
+            {
+                int srcWordHigh = dstWord - wordShift;
+                int srcWordLow = srcWordHigh - 1;
+
+                uint highBits = (srcWordHigh >= 0 && srcWordHigh < BufferSizeUints) ? _buffer[srcWordHigh] : 0;
+                uint lowBits = (srcWordLow >= 0 && srcWordLow < BufferSizeUints) ? _buffer[srcWordLow] : 0;
+
+                // Combine: upper bits from highBits shifted left, lower bits from lowBits shifted right
+                _buffer[dstWord] = (highBits << rot) | (lowBits >> (32 - rot));
+            }
+        }
+
+        // Clear the gap between old position and new position
+        // (the bits that were shifted away from the start)
+        int gapStartBit = fromBitPos;
+        int gapEndBit = fromBitPos + delta;
+        int gapStartWord = gapStartBit >> 5;
+        int gapEndWord = (gapEndBit - 1) >> 5;
+
+        // Clear words in the gap
+        for (int w = gapStartWord; w <= gapEndWord && w < srcStartWord + wordShift; w++)
+        {
+            if (w == gapStartWord && (gapStartBit & 31) != 0)
+            {
+                // Partial clear at start
+                uint mask = ~((1u << (gapStartBit & 31)) - 1);  // Clear upper bits
+                _buffer[w] &= ~mask;
+            }
+            else if (w == gapEndWord && (gapEndBit & 31) != 0)
+            {
+                // Partial clear at end
+                uint mask = (1u << (gapEndBit & 31)) - 1;  // Clear lower bits
+                _buffer[w] &= ~mask;
+            }
+            else
+            {
+                _buffer[w] = 0;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Shift bits left (shrink) by delta bits, starting from fromBitPos.
+    /// Uses word-level operations for efficiency.
+    /// Works forwards from start to end.
+    /// </summary>
+    private void ShiftBitsLeft(int fromBitPos, int delta)
+    {
+        int bitsToMove = _usedBits - fromBitPos;
+        if (bitsToMove <= 0)
+            return;
+
+        int dstStartBit = fromBitPos - delta;
+        int srcEndBit = _usedBits;
+
+        // The rotation amount within a word (0-31)
+        int rot = delta & 31;
+        int wordShift = delta >> 5;
+
+        int srcStartWord = fromBitPos >> 5;
+        int srcEndWord = (srcEndBit - 1) >> 5;
+        int dstStartWord = dstStartBit >> 5;
+
+        if (rot == 0)
+        {
+            // Word-aligned shift - simple word copy forwards
+            for (int srcWord = srcStartWord; srcWord <= srcEndWord; srcWord++)
+            {
+                int dstWord = srcWord - wordShift;
+                if (dstWord >= 0)
+                {
+                    _buffer[dstWord] = _buffer[srcWord];
+                }
+            }
+        }
+        else
+        {
+            // Non-aligned shift
+            // dst[i] = (src[i+wordShift] >> rot) | (src[i+wordShift+1] << (32-rot))
+
+            for (int dstWord = dstStartWord; dstWord <= srcEndWord - wordShift; dstWord++)
+            {
+                int srcWordLow = dstWord + wordShift;
+                int srcWordHigh = srcWordLow + 1;
+
+                uint lowBits = (srcWordLow >= 0 && srcWordLow < BufferSizeUints) ? _buffer[srcWordLow] : 0;
+                uint highBits = (srcWordHigh >= 0 && srcWordHigh < BufferSizeUints) ? _buffer[srcWordHigh] : 0;
+
+                _buffer[dstWord] = (lowBits >> rot) | (highBits << (32 - rot));
+            }
+        }
     }
 
     private void UpdateAncestorSizes(List<int> ancestors, int delta)
@@ -815,23 +918,12 @@ public class FlatTrie : ITrie
 
             int sizePos = reader.BitPosition;
             int currentSize = VarInt.Read(ref reader);
-            int currentClass = VarInt.GetClass(currentSize);
-
             int newSize = currentSize + delta;
-            int newClass = VarInt.GetClass(newSize);
 
-            if (newClass <= currentClass)
-            {
-                // Fits in current encoding - update in place using same class
-                var writer = new BitArrayWriter(_buffer, sizePos);
-                VarInt.WriteWithClass(ref writer, newSize, currentClass);
-            }
-            else
-            {
-                // Needs larger encoding - mark trie as needing rebuild
-                _sizesStale = true;
-                return; // Stop updating, will rebuild
-            }
+            // Since we always use fixed class 3 encoding (20 bits),
+            // updates always fit in place - no rebuild needed
+            var writer = new BitArrayWriter(_buffer, sizePos);
+            VarInt.WriteSize(ref writer, newSize);
         }
     }
 

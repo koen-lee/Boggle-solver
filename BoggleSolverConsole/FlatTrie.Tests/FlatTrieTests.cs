@@ -410,4 +410,66 @@ public class FlatTrieTests
         _output.WriteLine($"Total prefix bits: {stats.TotalPrefixBits}");
         _output.WriteLine($"Max prefix length: {stats.MaxPrefixLength}");
     }
+
+    [Fact]
+    public void RandomOrderWrites_Performance()
+    {
+        var trie = new FlatTrie();
+
+        // Generate keys 0-2340 (same count as ascending test)
+        const int keyCount = 2340;
+        var keys = new string[keyCount];
+        for (int i = 0; i < keyCount; i++)
+        {
+            keys[i] = $"k{i:D6}";
+        }
+
+        // Shuffle with fixed seed for reproducibility
+        var random = new Random(12345);
+        for (int i = keys.Length - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            (keys[i], keys[j]) = (keys[j], keys[i]);
+        }
+
+        // Write in random order
+        var fillTimer = Stopwatch.StartNew();
+        var writtenKeys = new Dictionary<string, long>();
+        for (int i = 0; i < keys.Length; i++)
+        {
+            string key = keys[i];
+            long value = i * 100;
+
+            bool written = trie.TryWrite(key, value);
+            if (!written)
+            {
+                _output.WriteLine($"Buffer full at key {i}");
+                break;
+            }
+            writtenKeys[key] = value;
+        }
+        fillTimer.Stop();
+
+        _output.WriteLine($"[RandomOrderWrites] Keys written: {writtenKeys.Count}");
+        _output.WriteLine($"Fill time: {fillTimer.ElapsedMilliseconds} ms");
+
+        // Verify all keys readable
+        var readTimer = Stopwatch.StartNew();
+        foreach (var kvp in writtenKeys)
+        {
+            bool found = trie.TryRead(kvp.Key, out long value);
+            Assert.True(found, $"Key {kvp.Key} not found");
+            Assert.Equal(kvp.Value, value);
+        }
+        readTimer.Stop();
+
+        _output.WriteLine($"Read all keys time: {readTimer.ElapsedMilliseconds} ms");
+
+        var stats = trie.GetStats();
+        _output.WriteLine($"Node count: {stats.NodeCount}");
+        _output.WriteLine($"Value count: {stats.ValueCount}");
+        _output.WriteLine($"Dead end count: {stats.DeadEndCount}");
+        _output.WriteLine($"Total prefix bits: {stats.TotalPrefixBits}");
+        _output.WriteLine($"Max prefix length: {stats.MaxPrefixLength}");
+    }
 }

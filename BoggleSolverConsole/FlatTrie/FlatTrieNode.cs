@@ -98,35 +98,23 @@ public class FlatTrieNode
 
     /// <summary>
     /// Calculate the total size needed to write a node (without children).
+    /// Uses fixed 20-bit size field to avoid rebuilds.
     /// </summary>
     public static int CalculateNodeSize(bool hasValue, bool hasChildren, int prefixLength, int childrenSize = 0)
     {
         if (!hasValue && !hasChildren)
             return DeadEndSize; // Dead end
 
-        // Size field itself - we need to calculate this iteratively
-        // since the size field's encoding depends on the total size
-        int sizeWithoutSizeField = 2; // Flags
-        sizeWithoutSizeField += VarInt.GetEncodedBitCount(prefixLength);
-        sizeWithoutSizeField += prefixLength;
-        if (hasValue) sizeWithoutSizeField += 64;
-        sizeWithoutSizeField += childrenSize;
+        // Fixed-size encoding: always use class 3 (20 bits) for size field
+        // This eliminates the need for rebuilds when sizes grow
+        int size = 2; // Flags
+        size += VarInt.SizeFieldBits; // Fixed 20-bit size field
+        size += VarInt.GetEncodedBitCount(prefixLength);
+        size += prefixLength;
+        if (hasValue) size += 64;
+        size += childrenSize;
 
-        // Now figure out size field encoding
-        // Try each class until we find one that works
-        for (int classCode = 0; classCode <= 3; classCode++)
-        {
-            int sizeFieldBits = 2 + VarInt.BitWidths[classCode];
-            int totalWithSize = sizeWithoutSizeField + sizeFieldBits;
-
-            if (totalWithSize <= VarInt.MaxValues[classCode] || classCode == 3)
-            {
-                return totalWithSize;
-            }
-        }
-
-        // Should never reach here
-        return sizeWithoutSizeField + 20; // Class 3
+        return size;
     }
 
     /// <summary>

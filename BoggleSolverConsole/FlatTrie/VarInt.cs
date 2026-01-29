@@ -87,4 +87,20 @@ public static class VarInt
             writer.WriteBits((uint)value, BitWidths[encodingClass]);
         }
     }
+
+    /// <summary>
+    /// Fixed size in bits for node size fields (always class 3 = 20 bits).
+    /// Using fixed size eliminates the need for trie rebuilds when sizes grow.
+    /// </summary>
+    public const int SizeFieldBits = 20;
+
+    /// <summary>
+    /// Write a node size field using fixed class 3 encoding.
+    /// This eliminates size field overflow and avoids costly rebuilds.
+    /// </summary>
+    public static void WriteSize(ref BitArrayWriter writer, int value)
+    {
+        writer.WriteBits(3, 2);  // Class 3
+        writer.WriteBits((uint)value, 18);  // 18 data bits
+    }
 }
