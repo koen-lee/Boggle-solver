@@ -710,134 +710,23 @@ public class FlatTrie : ITrie
         return true;
     }
 
+
     /// <summary>
     /// Shift bits right (expand) by delta bits, starting from fromBitPos.
-    /// Uses word-level barrel shift for efficiency.
-    /// Works backwards from end to avoid overwriting source data.
     /// </summary>
     private void ShiftBitsRight(int fromBitPos, int delta)
     {
         int bitsToMove = UsedBits - fromBitPos;
-        if (bitsToMove <= 0)
-            return;
-
-        // The rotation amount within a word (0-31)
-        int rot = delta & 31;  // delta % 32
-        int wordShift = delta >> 5;  // delta / 32
-
-        // Calculate source and destination word ranges
-        int usedBits = UsedBits;
-        int srcStartWord = fromBitPos >> 5;
-        int srcEndWord = (usedBits - 1) >> 5;
-        int dstEndWord = (usedBits - 1 + delta) >> 5;
-
-        if (rot == 0)
-        {
-            // Word-aligned shift - simple word copy backwards
-            for (int srcWord = srcEndWord; srcWord >= srcStartWord; srcWord--)
-            {
-                _buffer[srcWord + wordShift] = _buffer[srcWord];
-            }
-        }
-        else
-        {
-            // Non-aligned shift - each dest word gets bits from two source words
-            // dst[i] = (src[i-wordShift] << rot) | (src[i-wordShift-1] >> (32-rot))
-
-            // Process from end to start
-            for (int dstWord = dstEndWord; dstWord >= srcStartWord + wordShift; dstWord--)
-            {
-                int srcWordHigh = dstWord - wordShift;
-                int srcWordLow = srcWordHigh - 1;
-
-                uint highBits = (srcWordHigh >= 0 && srcWordHigh < BufferSizeUints) ? _buffer[srcWordHigh] : 0;
-                uint lowBits = (srcWordLow >= 0 && srcWordLow < BufferSizeUints) ? _buffer[srcWordLow] : 0;
-
-                // Combine: upper bits from highBits shifted left, lower bits from lowBits shifted right
-                _buffer[dstWord] = (highBits << rot) | (lowBits >> (32 - rot));
-            }
-        }
-
-        // Clear the gap between old position and new position
-        // (the bits that were shifted away from the start)
-        int gapStartBit = fromBitPos;
-        int gapEndBit = fromBitPos + delta;
-        int gapStartWord = gapStartBit >> 5;
-        int gapEndWord = (gapEndBit - 1) >> 5;
-
-        // Clear words in the gap
-        for (int w = gapStartWord; w <= gapEndWord && w < srcStartWord + wordShift; w++)
-        {
-            if (w == gapStartWord && (gapStartBit & 31) != 0)
-            {
-                // Partial clear at start
-                uint mask = ~((1u << (gapStartBit & 31)) - 1);  // Clear upper bits
-                _buffer[w] &= ~mask;
-            }
-            else if (w == gapEndWord && (gapEndBit & 31) != 0)
-            {
-                // Partial clear at end
-                uint mask = (1u << (gapEndBit & 31)) - 1;  // Clear lower bits
-                _buffer[w] &= ~mask;
-            }
-            else
-            {
-                _buffer[w] = 0;
-            }
-        }
+        BitArrayWriter.ShiftBitsRight(_buffer, fromBitPos, bitsToMove, delta);
     }
 
     /// <summary>
     /// Shift bits left (shrink) by delta bits, starting from fromBitPos.
-    /// Uses word-level operations for efficiency.
-    /// Works forwards from start to end.
     /// </summary>
     private void ShiftBitsLeft(int fromBitPos, int delta)
     {
-        int usedBits = UsedBits;
-        int bitsToMove = usedBits - fromBitPos;
-        if (bitsToMove <= 0)
-            return;
-
-        int dstStartBit = fromBitPos - delta;
-        int srcEndBit = usedBits;
-
-        // The rotation amount within a word (0-31)
-        int rot = delta & 31;
-        int wordShift = delta >> 5;
-
-        int srcStartWord = fromBitPos >> 5;
-        int srcEndWord = (srcEndBit - 1) >> 5;
-        int dstStartWord = dstStartBit >> 5;
-
-        if (rot == 0)
-        {
-            // Word-aligned shift - simple word copy forwards
-            for (int srcWord = srcStartWord; srcWord <= srcEndWord; srcWord++)
-            {
-                int dstWord = srcWord - wordShift;
-                if (dstWord >= 0)
-                {
-                    _buffer[dstWord] = _buffer[srcWord];
-                }
-            }
-        }
-        else
-        {
-            // Non-aligned shift
-            // dst[i] = (src[i+wordShift] >> rot) | (src[i+wordShift+1] << (32-rot))
-
-            for (int dstWord = dstStartWord; dstWord <= srcEndWord - wordShift; dstWord++)
-            {
-                int srcWordLow = dstWord + wordShift;
-                int srcWordHigh = srcWordLow + 1;
-
-                uint lowBits = (srcWordLow >= 0 && srcWordLow < BufferSizeUints) ? _buffer[srcWordLow] : 0;
-                uint highBits = (srcWordHigh >= 0 && srcWordHigh < BufferSizeUints) ? _buffer[srcWordHigh] : 0;
-
-                _buffer[dstWord] = (lowBits >> rot) | (highBits << (32 - rot));
-            }
-        }
+        int bitsToMove = UsedBits - fromBitPos;
+        BitArrayWriter.ShiftBitsLeft(_buffer, fromBitPos, bitsToMove, delta);
     }
 
     private void UpdateAncestorSizes(List<int> ancestors, int delta)
@@ -884,28 +773,43 @@ public class FlatTrie : ITrie
         Span<uint> keyBuffer = stackalloc uint[uintCount];
         var keyBits = EncodeKey(key, byteCount, keyBuffer);
 
-        // Find the node and clear HasValue
+        // Find the node and delete, propagating size changes via return value
         DeleteInternal(ref keyBits, 0, 0);
     }
 
-    private bool DeleteInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos)
+    /// <summary>
+    /// Delete a key from the trie. Returns (success, delta) where delta is the
+    /// size change that needs to be propagated to ancestors.
+    /// </summary>
+    private (bool success, int delta) DeleteInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos)
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
         var (hasValue, hasChildren, isDeadEnd) = ReadNodeHeader(ref reader);
         if (isDeadEnd)
-            return false; // Dead end
-        reader.Skip(SizeFieldBits);
+            return (false, 0); // Dead end
+
+        int sizeFieldPos = reader.BitPosition;
+        int oldSize = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
+        int prefixStartPos = reader.BitPosition;
 
-        // Match prefix using XOR-based comparison
-        var keyView = keyBits.Slice(keyBitIndex, prefixLength);
+        // Match prefix
+        int keyRemainingBits = keyBits.Length - keyBitIndex;
+        int bitsToCompare = Math.Min(prefixLength, keyRemainingBits);
 
-        var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(reader.BitPosition, prefixLength);
-        int matchedBits = prefixView.CommonPrefixLength(ref keyView);
+        if (bitsToCompare > 0)
+        {
+            var prefixView = ReadOnlyBitString.Wrap(_buffer).Slice(prefixStartPos, bitsToCompare);
+            var keyView = keyBits.Slice(keyBitIndex, bitsToCompare);
+            int matchedBits = prefixView.CommonPrefixLength(ref keyView);
 
-        if (matchedBits < prefixLength)
-            return false; // Prefix mismatch
+            if (matchedBits < bitsToCompare)
+                return (false, 0); // Prefix mismatch
+        }
+
+        if (bitsToCompare < prefixLength && keyRemainingBits <= bitsToCompare)
+            return (false, 0); // Key exhausted before prefix ended
 
         reader.Skip(prefixLength);
         keyBitIndex += prefixLength;
@@ -913,25 +817,42 @@ public class FlatTrie : ITrie
         // Key fully matched?
         if (keyBitIndex == keyBits.Length)
         {
-            if (hasValue)
+            if (!hasValue)
+                return (false, 0); // No value to delete
+
+            if (!hasChildren)
             {
-                // Clear HasValue bit
+                // Leaf node with value - convert to dead end
                 var writer = new BitArrayWriter(_buffer, nodeBitPos);
-                writer.WriteBit(false); // Clear HasValue
-                                        // TODO: we should update the size 
-                                        // because we are 64 bits smaller now
-                                        // also, we could turn this into a dead end if no children
-                                        // also, shift the children and update ancestor sizes
-                                        //
-                                        // HasValue implies 64 bits for value, so this is a bug.
-                return true;
+                WriteDeadEnd(ref writer);
+
+                int delta = DeadEndSize - oldSize;
+                // Shift everything after this node
+                ShiftBits(nodeBitPos + oldSize, delta);
+                return (true, delta);
             }
-            return false;
+
+            // Internal node with value and children - remove value, keep children
+            // Need to shift children left by 64 bits and update size
+            int valuePos = reader.BitPosition;
+            int childrenStartPos = valuePos + 64;
+
+            // First shift children left by 64 bits (overwriting the value)
+            // Must do this BEFORE updating size, because ShiftBitsLeft uses UsedBits
+            ShiftBitsLeft(childrenStartPos, 64);
+
+            // Now update node header: clear HasValue, update size
+            var writer2 = new BitArrayWriter(_buffer, nodeBitPos);
+            writer2.WriteBit(false); // HasValue = false
+            writer2.WriteBit(true);  // HasChildren = true (unchanged)
+            WriteSize(ref writer2, oldSize - 64);
+
+            return (true, -64);
         }
 
         // More key bits - follow children
         if (!hasChildren)
-            return false;
+            return (false, 0);
 
         if (hasValue)
             reader.Skip(64);
@@ -939,12 +860,20 @@ public class FlatTrie : ITrie
         bool nextBit = keyBits[keyBitIndex];
         keyBitIndex++;
 
-        var (leftChildPos, rightChildPos, _) = CalculateChildPositions(ref reader);
+        var (leftChildPos, rightChildPos, leftIsDeadEnd) = CalculateChildPositions(ref reader);
 
-        if (nextBit == false)
-            return DeleteInternal(ref keyBits, keyBitIndex, leftChildPos);
-        else
-            return DeleteInternal(ref keyBits, keyBitIndex, rightChildPos);
+        (bool success, int childDelta) = nextBit == false
+            ? DeleteInternal(ref keyBits, keyBitIndex, leftChildPos)
+            : DeleteInternal(ref keyBits, keyBitIndex, rightChildPos);
+
+        if (!success || childDelta == 0)
+            return (success, 0);
+
+        // Child size changed - update this node's size
+        var sizeWriter = new BitArrayWriter(_buffer, sizeFieldPos);
+        WriteSize(ref sizeWriter, oldSize + childDelta);
+
+        return (true, childDelta);
     }
 
     public void Save(string filename)

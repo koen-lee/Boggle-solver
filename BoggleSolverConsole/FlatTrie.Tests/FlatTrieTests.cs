@@ -177,10 +177,16 @@ public class FlatTrieTests
         Assert.True(trie.TryRead("Hello", out long v1));
         Assert.Equal(1, v1);
 
+        var statsAfterHello = trie.GetStats();
+        _output.WriteLine($"After 'Hello': Nodes={statsAfterHello.NodeCount}, Values={statsAfterHello.ValueCount}");
+
         // Add "Hello World" (Hello becomes internal node with value + child)
         Assert.True(trie.TryWrite("Hello World", 2));
         Assert.True(trie.TryRead("Hello World", out long v2));
         Assert.Equal(2, v2);
+
+        var statsAfterBoth = trie.GetStats();
+        _output.WriteLine($"After both: Nodes={statsAfterBoth.NodeCount}, Values={statsAfterBoth.ValueCount}, DeadEnds={statsAfterBoth.DeadEndCount}");
 
         // Both should be readable before delete
         Assert.True(trie.TryRead("Hello", out v1));
@@ -190,6 +196,9 @@ public class FlatTrieTests
 
         // Delete "Hello" - this clears HasValue but doesn't shift children
         trie.Delete("Hello");
+
+        var statsAfterDelete = trie.GetStats();
+        _output.WriteLine($"After delete: Nodes={statsAfterDelete.NodeCount}, Values={statsAfterDelete.ValueCount}, DeadEnds={statsAfterDelete.DeadEndCount}");
 
         // "Hello" should no longer exist
         Assert.False(trie.TryRead("Hello", out _));

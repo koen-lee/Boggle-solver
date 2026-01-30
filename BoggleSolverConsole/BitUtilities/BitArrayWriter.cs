@@ -153,4 +153,54 @@ public ref struct BitArrayWriter
         WriteBits((uint)(value & 0xFFFFFFFF), 32);
         WriteBits((uint)(value >> 32), 32);
     }
+
+    /// <summary>
+    /// Shift bits left (shrink) by delta bits.
+    /// Bits from [fromBitPos, fromBitPos+bitsToMove) are moved to [fromBitPos-delta, fromBitPos-delta+bitsToMove).
+    /// Bits before (fromBitPos-delta) are preserved.
+    /// </summary>
+    public static void ShiftBitsLeft(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
+    {
+        if (bitsToMove <= 0 || delta <= 0)
+            return;
+
+        int dstStartBit = fromBitPos - delta;
+        var srcSlice = ReadOnlyBitString.Wrap(buffer).Slice(fromBitPos, bitsToMove);
+        var writer = new BitArrayWriter(buffer, dstStartBit);
+        writer.WriteBitString(ref srcSlice);
+    }
+
+    /// <summary>
+    /// Shift bits right (expand) by delta bits.
+    /// Bits from [fromBitPos, fromBitPos+bitsToMove) are moved to [fromBitPos+delta, fromBitPos+delta+bitsToMove).
+    /// The gap [fromBitPos, fromBitPos+delta) is left unchanged (caller will overwrite).
+    /// Copies backwards (right to left) to avoid overwriting source before reading.
+    /// </summary>
+    public static void ShiftBitsRight(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
+    {
+        if (bitsToMove <= 0 || delta <= 0)
+            return;
+
+        // Copy backwards in 32-bit chunks for efficiency
+        int remaining = bitsToMove;
+        int srcPos = fromBitPos + bitsToMove;
+        int dstPos = srcPos + delta;
+        var bitString = ReadOnlyBitString.Wrap(buffer);
+
+        while (remaining > 0)
+        {
+            int chunkSize = Math.Min(remaining, 32);
+            srcPos -= chunkSize;
+            dstPos -= chunkSize;
+
+            // Read chunk from source using ToBitPrefix
+            uint chunk = bitString.ToBitPrefix(srcPos, chunkSize).Bits;
+
+            // Write chunk to destination
+            var writer = new BitArrayWriter(buffer, dstPos);
+            writer.WriteBits(chunk, chunkSize);
+
+            remaining -= chunkSize;
+        }
+    }
 }
