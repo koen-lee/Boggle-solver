@@ -192,30 +192,37 @@ public ref struct BitArrayWriter
         {
             int dstStartWord = dstStartBit >> 5;
             int dstEndWord = (dstStartBit + bitsToMove - 1) >> 5;
-            int bitOffset = dstBitInWord; // same as srcBitInWord
+            int startOffset = dstBitInWord;
+            int endOffset = ((dstStartBit + bitsToMove - 1) & 31) + 1;
 
+            // Pre-save boundary words
+            uint savedFirst = buffer[dstStartWord];
+            uint savedLast = buffer[dstEndWord];
+
+            // Tight loop - direct word copies
             for (int dstWord = dstStartWord; dstWord <= dstEndWord; dstWord++)
             {
                 int srcWord = dstWord + wordShift;
-                bool isFirstWord = (dstWord == dstStartWord) && (bitOffset != 0);
-                bool isLastWord = (dstWord == dstEndWord);
-                int lastBitInRange = (dstStartBit + bitsToMove - 1) & 31;
+                buffer[dstWord] = (srcWord < buffer.Length) ? buffer[srcWord] : 0;
+            }
 
-                if (isFirstWord || (isLastWord && lastBitInRange != 31))
+            // Fix up boundary words
+            if (dstStartWord == dstEndWord)
+            {
+                uint writeMask = ((1u << (endOffset - startOffset)) - 1) << startOffset;
+                buffer[dstStartWord] = (savedFirst & ~writeMask) | (buffer[dstStartWord] & writeMask);
+            }
+            else
+            {
+                if (startOffset != 0)
                 {
-                    // Partial word - need to preserve some bits
-                    int startBit = isFirstWord ? bitOffset : 0;
-                    int endBit = isLastWord ? lastBitInRange + 1 : 32;
-                    uint mask = ((1u << (endBit - startBit)) - 1) << startBit;
-                    if (endBit - startBit == 32) mask = uint.MaxValue;
-
-                    uint srcValue = (srcWord < buffer.Length) ? buffer[srcWord] : 0;
-                    buffer[dstWord] = (buffer[dstWord] & ~mask) | (srcValue & mask);
+                    uint preserveMask = (1u << startOffset) - 1;
+                    buffer[dstStartWord] = (savedFirst & preserveMask) | (buffer[dstStartWord] & ~preserveMask);
                 }
-                else
+                if (endOffset != 32)
                 {
-                    // Complete word - direct copy
-                    buffer[dstWord] = buffer[srcWord];
+                    uint preserveMask = uint.MaxValue << endOffset;
+                    buffer[dstEndWord] = (savedLast & preserveMask) | (buffer[dstEndWord] & ~preserveMask);
                 }
             }
             return;
@@ -225,14 +232,32 @@ public ref struct BitArrayWriter
         int dstEndBit = dstStartBit + bitsToMove;
         int dstStartWordGen = dstStartBit >> 5;
         int dstEndWordGen = (dstEndBit - 1) >> 5;
+        int firstWordOffset = dstStartBit & 31;
+        int lastWordEndBit = ((dstEndBit - 1) & 31) + 1;
 
-        // Pre-save boundary words for restoration after loop
+        // Fast path 3: single word destination - just one barrel shift with mask
+        if (dstStartWordGen == dstEndWordGen)
+        {
+            int srcWordLow = dstStartWordGen + wordShift;
+            int srcWordHigh = srcWordLow + 1;
+            uint lowBits = (srcWordLow >= 0 && srcWordLow < buffer.Length) ? buffer[srcWordLow] : 0;
+            uint highBits = (srcWordHigh >= 0 && srcWordHigh < buffer.Length) ? buffer[srcWordHigh] : 0;
+
+            ulong combined = ((ulong)highBits << 32) | lowBits;
+            uint shifted = (uint)(combined >> rot);
+
+            uint writeMask = ((1u << (lastWordEndBit - firstWordOffset)) - 1) << firstWordOffset;
+            buffer[dstStartWordGen] = (buffer[dstStartWordGen] & ~writeMask) | (shifted & writeMask);
+            return;
+        }
+
+        // Multi-word case: pre-save boundary words for restoration after loop
         uint savedFirstWord = buffer[dstStartWordGen];
         uint savedLastWord = buffer[dstEndWordGen];
 
         // Pre-load first lowBits (will become highBits after first iteration)
         int firstSrcWordLow = dstStartWordGen + wordShift;
-        uint lowBits = (firstSrcWordLow >= 0 && firstSrcWordLow < buffer.Length) ? buffer[firstSrcWordLow] : 0;
+        uint lowBitsLoop = (firstSrcWordLow >= 0 && firstSrcWordLow < buffer.Length) ? buffer[firstSrcWordLow] : 0;
 
         // Tight loop - write full words, fix boundaries after
         for (int dstWord = dstStartWordGen; dstWord <= dstEndWordGen; dstWord++)
@@ -240,35 +265,22 @@ public ref struct BitArrayWriter
             int srcWordHigh = dstWord + wordShift + 1;
             uint highBits = (srcWordHigh >= 0 && srcWordHigh < buffer.Length) ? buffer[srcWordHigh] : 0;
 
-            // 64-bit barrel shift: combine two 32-bit words and extract middle 32 bits
-            ulong combined = ((ulong)highBits << 32) | lowBits;
+            ulong combined = ((ulong)highBits << 32) | lowBitsLoop;
             buffer[dstWord] = (uint)(combined >> rot);
 
-            lowBits = highBits;
+            lowBitsLoop = highBits;
         }
 
         // Fix up boundary words - restore bits outside the write range
-        int firstWordOffset = dstStartBit & 31;
-        int lastWordEndBit = ((dstEndBit - 1) & 31) + 1;
-
-        if (dstStartWordGen == dstEndWordGen)
+        if (firstWordOffset != 0)
         {
-            // Single word case - preserve bits outside [firstWordOffset, lastWordEndBit)
-            uint writeMask = ((1u << (lastWordEndBit - firstWordOffset)) - 1) << firstWordOffset;
-            buffer[dstStartWordGen] = (savedFirstWord & ~writeMask) | (buffer[dstStartWordGen] & writeMask);
+            uint preserveMask = (1u << firstWordOffset) - 1;
+            buffer[dstStartWordGen] = (savedFirstWord & preserveMask) | (buffer[dstStartWordGen] & ~preserveMask);
         }
-        else
+        if (lastWordEndBit != 32)
         {
-            if (firstWordOffset != 0)
-            {
-                uint preserveMask = (1u << firstWordOffset) - 1;
-                buffer[dstStartWordGen] = (savedFirstWord & preserveMask) | (buffer[dstStartWordGen] & ~preserveMask);
-            }
-            if (lastWordEndBit != 32)
-            {
-                uint preserveMask = uint.MaxValue << lastWordEndBit;
-                buffer[dstEndWordGen] = (savedLastWord & preserveMask) | (buffer[dstEndWordGen] & ~preserveMask);
-            }
+            uint preserveMask = uint.MaxValue << lastWordEndBit;
+            buffer[dstEndWordGen] = (savedLastWord & preserveMask) | (buffer[dstEndWordGen] & ~preserveMask);
         }
     }
 
@@ -307,31 +319,37 @@ public ref struct BitArrayWriter
         {
             int dstStartWord = dstStartBit >> 5;
             int dstEndWord = (dstStartBit + bitsToMove - 1) >> 5;
-            int bitOffset = dstBitInWord;
+            int startOffset = dstBitInWord;
+            int endOffset = ((dstStartBit + bitsToMove - 1) & 31) + 1;
 
-            // Copy backwards to avoid overwriting source
+            // Pre-save boundary words
+            uint savedFirst = buffer[dstStartWord];
+            uint savedLast = buffer[dstEndWord];
+
+            // Tight loop - direct word copies (backwards to avoid overwriting source)
             for (int dstWord = dstEndWord; dstWord >= dstStartWord; dstWord--)
             {
                 int srcWord = dstWord - wordShift;
-                bool isFirstWord = (dstWord == dstStartWord) && (bitOffset != 0);
-                bool isLastWord = (dstWord == dstEndWord);
-                int lastBitInRange = (dstStartBit + bitsToMove - 1) & 31;
+                buffer[dstWord] = (srcWord >= 0 && srcWord < buffer.Length) ? buffer[srcWord] : 0;
+            }
 
-                if (isFirstWord || (isLastWord && lastBitInRange != 31))
+            // Fix up boundary words
+            if (dstStartWord == dstEndWord)
+            {
+                uint writeMask = ((1u << (endOffset - startOffset)) - 1) << startOffset;
+                buffer[dstStartWord] = (savedFirst & ~writeMask) | (buffer[dstStartWord] & writeMask);
+            }
+            else
+            {
+                if (startOffset != 0)
                 {
-                    // Partial word - need to preserve some bits
-                    int startBit = isFirstWord ? bitOffset : 0;
-                    int endBit = isLastWord ? lastBitInRange + 1 : 32;
-                    uint mask = ((1u << (endBit - startBit)) - 1) << startBit;
-                    if (endBit - startBit == 32) mask = uint.MaxValue;
-
-                    uint srcValue = (srcWord >= 0 && srcWord < buffer.Length) ? buffer[srcWord] : 0;
-                    buffer[dstWord] = (buffer[dstWord] & ~mask) | (srcValue & mask);
+                    uint preserveMask = (1u << startOffset) - 1;
+                    buffer[dstStartWord] = (savedFirst & preserveMask) | (buffer[dstStartWord] & ~preserveMask);
                 }
-                else
+                if (endOffset != 32)
                 {
-                    // Complete word - direct copy
-                    buffer[dstWord] = buffer[srcWord];
+                    uint preserveMask = uint.MaxValue << endOffset;
+                    buffer[dstEndWord] = (savedLast & preserveMask) | (buffer[dstEndWord] & ~preserveMask);
                 }
             }
             return;
@@ -341,14 +359,32 @@ public ref struct BitArrayWriter
         int dstEndBit = dstStartBit + bitsToMove;
         int dstStartWordGen = dstStartBit >> 5;
         int dstEndWordGen = (dstEndBit - 1) >> 5;
+        int firstWordOffset = dstStartBit & 31;
+        int lastWordEndBit = ((dstEndBit - 1) & 31) + 1;
 
-        // Pre-save boundary words for restoration after loop
+        // Fast path 3: single word destination - just one barrel shift with mask
+        if (dstStartWordGen == dstEndWordGen)
+        {
+            int srcWordHigh = dstStartWordGen - wordShift;
+            int srcWordLow = srcWordHigh - 1;
+            uint highBits = (srcWordHigh >= 0 && srcWordHigh < buffer.Length) ? buffer[srcWordHigh] : 0;
+            uint lowBits = (srcWordLow >= 0 && srcWordLow < buffer.Length) ? buffer[srcWordLow] : 0;
+
+            ulong combined = ((ulong)highBits << 32) | lowBits;
+            uint shifted = (uint)(combined >> (32 - rot));
+
+            uint writeMask = ((1u << (lastWordEndBit - firstWordOffset)) - 1) << firstWordOffset;
+            buffer[dstStartWordGen] = (buffer[dstStartWordGen] & ~writeMask) | (shifted & writeMask);
+            return;
+        }
+
+        // Multi-word case: pre-save boundary words for restoration after loop
         uint savedFirstWord = buffer[dstStartWordGen];
         uint savedLastWord = buffer[dstEndWordGen];
 
         // Pre-load first highBits (will become lowBits after first iteration)
         int firstSrcWordHigh = dstEndWordGen - wordShift;
-        uint highBits = (firstSrcWordHigh >= 0 && firstSrcWordHigh < buffer.Length) ? buffer[firstSrcWordHigh] : 0;
+        uint highBitsLoop = (firstSrcWordHigh >= 0 && firstSrcWordHigh < buffer.Length) ? buffer[firstSrcWordHigh] : 0;
 
         // Process backwards to avoid overwriting source - tight loop, fix boundaries after
         for (int dstWord = dstEndWordGen; dstWord >= dstStartWordGen; dstWord--)
@@ -356,35 +392,22 @@ public ref struct BitArrayWriter
             int srcWordLow = dstWord - wordShift - 1;
             uint lowBits = (srcWordLow >= 0 && srcWordLow < buffer.Length) ? buffer[srcWordLow] : 0;
 
-            // 64-bit barrel shift: combine two 32-bit words and extract middle 32 bits
-            ulong combined = ((ulong)highBits << 32) | lowBits;
+            ulong combined = ((ulong)highBitsLoop << 32) | lowBits;
             buffer[dstWord] = (uint)(combined >> (32 - rot));
 
-            highBits = lowBits;
+            highBitsLoop = lowBits;
         }
 
         // Fix up boundary words - restore bits outside the write range
-        int firstWordOffset = dstStartBit & 31;
-        int lastWordEndBit = ((dstEndBit - 1) & 31) + 1;
-
-        if (dstStartWordGen == dstEndWordGen)
+        if (firstWordOffset != 0)
         {
-            // Single word case - preserve bits outside [firstWordOffset, lastWordEndBit)
-            uint writeMask = ((1u << (lastWordEndBit - firstWordOffset)) - 1) << firstWordOffset;
-            buffer[dstStartWordGen] = (savedFirstWord & ~writeMask) | (buffer[dstStartWordGen] & writeMask);
+            uint preserveMask = (1u << firstWordOffset) - 1;
+            buffer[dstStartWordGen] = (savedFirstWord & preserveMask) | (buffer[dstStartWordGen] & ~preserveMask);
         }
-        else
+        if (lastWordEndBit != 32)
         {
-            if (firstWordOffset != 0)
-            {
-                uint preserveMask = (1u << firstWordOffset) - 1;
-                buffer[dstStartWordGen] = (savedFirstWord & preserveMask) | (buffer[dstStartWordGen] & ~preserveMask);
-            }
-            if (lastWordEndBit != 32)
-            {
-                uint preserveMask = uint.MaxValue << lastWordEndBit;
-                buffer[dstEndWordGen] = (savedLastWord & preserveMask) | (buffer[dstEndWordGen] & ~preserveMask);
-            }
+            uint preserveMask = uint.MaxValue << lastWordEndBit;
+            buffer[dstEndWordGen] = (savedLastWord & preserveMask) | (buffer[dstEndWordGen] & ~preserveMask);
         }
     }
 }
