@@ -182,6 +182,67 @@ public class BitArrayWriterTests
         Assert.Equal(originalNext22, shifted);
     }
 
+    [Fact]
+    public void ShiftBitsRightSimd_LargeShift_MovesCorrectly()
+    {
+        // Need 8+ destination words to trigger SIMD path
+        // Use 16 words (512 bits) of data with non-aligned positions
+        var buffer = new uint[32];
+
+        // Write recognizable pattern at bits [50, 562) - 512 bits = 16 words
+        var writer = new BitArrayWriter(buffer, 50);
+        uint[] testData = new uint[16];
+        for (int i = 0; i < 16; i++)
+        {
+            testData[i] = (uint)(0xDEAD0000 | i);
+            writer.WriteBits(testData[i], 32);
+        }
+
+        // Shift bits [50, 562) right by 75 bits to [125, 637)
+        // This creates a non-word-aligned shift that should use SIMD
+        BitArrayWriter.ShiftBitsRightSimd(buffer, fromBitPos: 50, bitsToMove: 512, delta: 75);
+
+        // Read back from new position and verify
+        var reader = new BitArrayReader(buffer, 125);
+        for (int i = 0; i < 16; i++)
+        {
+            Assert.Equal(testData[i], reader.ReadBits(32));
+        }
+    }
+
+    [Fact]
+    public void ShiftBitsRightSimd_MatchesScalarVersion()
+    {
+        // Test that SIMD version produces identical results to scalar version
+        var bufferScalar = new uint[32];
+        var bufferSimd = new uint[32];
+
+        // Write identical data to both buffers
+        var writerScalar = new BitArrayWriter(bufferScalar, 37);
+        var writerSimd = new BitArrayWriter(bufferSimd, 37);
+
+        for (int i = 0; i < 12; i++)
+        {
+            uint value = (uint)(0xCAFE0000 | (i * 17));
+            writerScalar.WriteBits(value, 32);
+            writerSimd.WriteBits(value, 32);
+        }
+
+        // Apply same shift to both using different methods
+        int fromBitPos = 37;
+        int bitsToMove = 384; // 12 words
+        int delta = 91;
+
+        BitArrayWriter.ShiftBitsRight(bufferScalar, fromBitPos, bitsToMove, delta);
+        BitArrayWriter.ShiftBitsRightSimd(bufferSimd, fromBitPos, bitsToMove, delta);
+
+        // Verify buffers are identical
+        for (int i = 0; i < bufferScalar.Length; i++)
+        {
+            Assert.Equal(bufferScalar[i], bufferSimd[i]);
+        }
+    }
+
     /// <summary>
     /// Helper to read bits as a string of 0s and 1s for easy comparison.
     /// </summary>
