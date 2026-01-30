@@ -115,15 +115,6 @@ public class FlatTrie : ITrie
         writer.WriteBitString(ref prefix);
     }
 
-    private uint[] CopyBitsToBuffer(int bitPosition, int bitCount)
-    {
-        var slice = ReadOnlyBitString.Wrap(_buffer).Slice(bitPosition, bitCount);
-        var buffer = new uint[(bitCount + 31) / 32];
-        var writer = new BitArrayWriter(buffer);
-        writer.WriteBitString(ref slice);
-        return buffer;
-    }
-
     public FlatTrie()
     {
         // Buffer starts as all zeros, which is a dead end (empty trie)
@@ -268,9 +259,7 @@ public class FlatTrie : ITrie
             return WriteNewRoot(ref keyBits, value);
         }
 
-        // Track ancestors during descent for size updates
-        var ancestors = new List<int>();
-        return TryWriteInternal(ref keyBits, 0, 0, value, ancestors);
+        return TryWriteInternal(ref keyBits, 0, 0, value).success;
     }
 
     private bool WriteNewRoot(ref ReadOnlyBitString keyBits, long value)
@@ -291,7 +280,7 @@ public class FlatTrie : ITrie
         return true;
     }
 
-    private bool TryWriteInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos, long value, List<int> ancestors)
+    private (bool success, int delta) TryWriteInternal(ref ReadOnlyBitString keyBits, int keyBitIndex, int nodeBitPos, long value)
     {
         var reader = new BitArrayReader(_buffer, nodeBitPos);
 
@@ -299,8 +288,9 @@ public class FlatTrie : ITrie
 
         // Dead end - this shouldn't happen if called correctly
         if (isDeadEnd)
-            return false;
-        reader.Skip(SizeFieldBits);
+            return (false, 0);
+        int sizeFieldPos = reader.BitPosition;
+        int oldSize = ReadSize(ref reader);
         int prefixLength = VarInt.Read(ref reader);
         int prefixStartPos = reader.BitPosition;
 
@@ -319,7 +309,7 @@ public class FlatTrie : ITrie
         // Case 1: Divergence within prefix - need to split
         if (matchedBits < prefixLength && keyBitIndex + matchedBits < keyBits.Length)
         {
-            return SplitNode(nodeBitPos, ref keyBits, keyBitIndex, matchedBits, value, ancestors);
+            return SplitNode(nodeBitPos, ref keyBits, keyBitIndex, matchedBits, value, keyExhausted: false);
         }
 
         // Case 2: Key exhausted within or at end of prefix
@@ -331,15 +321,15 @@ public class FlatTrie : ITrie
                 {
                     // Need to expand the node to include a value
                     // This requires shifting and is complex
-                    return RewriteNodeWithValue(nodeBitPos, value, ancestors);
+                    return RewriteNodeWithValue(nodeBitPos, value);
                 }
                 // Exact match - update value
-                return UpdateNodeValue(nodeBitPos, value);
+                return (UpdateNodeValue(nodeBitPos, value), 0);
             }
             else
             {
                 // Key ends in middle of prefix - need to split
-                return SplitNodeKeyExhausted(nodeBitPos, matchedBits, value, ancestors);
+                return SplitNode(nodeBitPos, ref keyBits, keyBitIndex, matchedBits, value, keyExhausted: true);
             }
         }
 
@@ -350,7 +340,7 @@ public class FlatTrie : ITrie
         if (!hasChildren)
         {
             // Need to add children to this leaf
-            return AddChildToLeaf(nodeBitPos, ref keyBits, keyBitIndex, value, ancestors);
+            return AddChildToLeaf(nodeBitPos, ref keyBits, keyBitIndex, value);
         }
 
         // Skip value if present
@@ -359,30 +349,35 @@ public class FlatTrie : ITrie
             reader.Skip(64);
         }
 
-        // Add this node to ancestors before descending
-        ancestors.Add(nodeBitPos);
-
         // Follow appropriate child
         bool nextBit = keyBits[keyBitIndex];
         keyBitIndex++;
 
         var (leftChildPos, rightChildPos, leftIsDeadEnd) = CalculateChildPositions(ref reader);
 
-        if (nextBit == false)
-        {
-            if (leftIsDeadEnd)
-                return ReplaceDeadEnd(leftChildPos, ref keyBits, keyBitIndex, value, ancestors);
-            return TryWriteInternal(ref keyBits, keyBitIndex, leftChildPos, value, ancestors);
-        }
-        else
-        {
-            reader.Seek(rightChildPos);
-            (_, _, bool rightIsDeadEnd) = ReadNodeHeader(ref reader);
+        (bool success, int childDelta) = nextBit == false
+            ? (leftIsDeadEnd
+                ? ReplaceDeadEnd(leftChildPos, ref keyBits, keyBitIndex, value)
+                : TryWriteInternal(ref keyBits, keyBitIndex, leftChildPos, value))
+            : (IsDeadEnd(rightChildPos)
+                ? ReplaceDeadEnd(rightChildPos, ref keyBits, keyBitIndex, value)
+                : TryWriteInternal(ref keyBits, keyBitIndex, rightChildPos, value));
 
-            if (rightIsDeadEnd)
-                return ReplaceDeadEnd(rightChildPos, ref keyBits, keyBitIndex, value, ancestors);
-            return TryWriteInternal(ref keyBits, keyBitIndex, rightChildPos, value, ancestors);
-        }
+        if (!success || childDelta == 0)
+            return (success, 0);
+
+        // Child size changed - update this node's size
+        var sizeWriter = new BitArrayWriter(_buffer, sizeFieldPos);
+        WriteSize(ref sizeWriter, oldSize + childDelta);
+
+        return (true, childDelta);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsDeadEnd(int nodeBitPos)
+    {
+        var reader = new BitArrayReader(_buffer, nodeBitPos);
+        return reader.ReadBits(2) == 0;
     }
 
     private bool UpdateNodeValue(int nodeBitPos, long value)
@@ -403,220 +398,183 @@ public class FlatTrie : ITrie
     }
 
     // Upgrade an internal node to have a value, shifting bits as needed
-    private bool RewriteNodeWithValue(int nodeBitPos, long value, List<int> ancestors)
+    private (bool success, int delta) RewriteNodeWithValue(int nodeBitPos, long value)
     {
         // Read current node
         var (hasValue, hasChildren, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
         if (hasValue) throw new InvalidOperationException("Node already has value");
         int delta = 64; // size of value in bits
 
-        // Shift everything after this node
-        if (!ShiftBits(nodeBitPos + oldSize, delta))
-            return false;
+        // Calculate where children start (right after prefix)
+        int childrenStartPos = reader.BitPosition + prefixLength;
 
-        // Rewrite node with value
+        // Shift children and everything after to make room for value
+        if (!ShiftBits(childrenStartPos, delta))
+            return (false, 0);
+
+        // Rewrite node header with value flag and new size
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
         writer.WriteBit(true); // HasValue
-        writer.WriteBit(hasChildren); //or skip, because unchanged
+        writer.WriteBit(hasChildren);
         WriteSize(ref writer, oldSize + delta);
-        writer.Seek(reader.BitPosition + prefixLength); //skip prefix
+        writer.Seek(childrenStartPos); // position right after prefix
 
-        // Write the new value
+        // Write the new value (children follow naturally after the shift)
         writer.WriteLong(value);
 
-        // Children were already shifted, and now follow naturally
-
-        UpdateAncestorSizes(ancestors, delta);
-
-        return true;
+        return (true, delta);
     }
 
-    // TODO: do not pass ancestors, return delta instead and update sizes when bubbling back up the stack
-    private bool SplitNode(int nodeBitPos, ref ReadOnlyBitString keyBits, int keyBitIndex, int matchedBits, long newValue, List<int> ancestors)
+    /// <summary>
+    /// Split a node at a divergence point within its prefix.
+    /// When keyExhausted=false: new key diverges, create parent (no value) + old child + new key child
+    /// When keyExhausted=true: new key ends here, create parent (with value) + old child + dead end
+    /// </summary>
+    private (bool success, int delta) SplitNode(
+        int nodeBitPos,
+        ref ReadOnlyBitString keyBits,
+        int keyBitIndex,
+        int matchedBits,
+        long newValue,
+        bool keyExhausted)
     {
-        // Read current node completely first
+        // Step 1: Read all needed information from the original buffer
         var (oldHasValue, oldHasChildren, oldSize, oldPrefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
-        var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
-        reader.Skip(oldPrefixLength);
-        long oldValue = oldHasValue ? reader.ReadLong() : 0;
+        int prefixStartPos = reader.BitPosition;
 
-        // TODO: improve efficiency here by avoiding copying bits to buffer
-        // 1. calculate the new prefix size
-        // 2. calculate size of new node
-        // 3. check space
-        // 4. shift bits, don't copy bits to buffer
-        // 5. write new node
+        // Read diverge bit directly from buffer (before any shifting)
+        var divergeReader = new BitArrayReader(_buffer, prefixStartPos + matchedBits);
+        bool oldDivergeBit = divergeReader.ReadBit();
 
-        // Save children data if present (BEFORE any shifting)
-        int childrenStartPos = reader.BitPosition;
-        int childrenSize = oldHasChildren ? (oldSize - (childrenStartPos - nodeBitPos)) : 0;
-        uint[]? childrenCopy = oldHasChildren && childrenSize > 0
-            ? CopyBitsToBuffer(childrenStartPos, childrenSize)
-            : null;
-
-        // The diverging bits
-        var oldPrefixReader = new BitArrayReader(oldPrefixBits, matchedBits);
-        bool oldDivergeBit = oldPrefixReader.ReadBit();
-
-        // Old node's remaining prefix (after the diverge bit)
+        // Step 2: Calculate sizes
         int oldRemainingPrefixLen = oldPrefixLength - matchedBits - 1;
 
-        // New key's remaining bits (after the diverge bit)
-        int newRemainingKeyLen = keyBits.Length - keyBitIndex - matchedBits - 1;
+        int oldHeaderSize = 2 + SizeFieldBits + VarInt.GetEncodedBitCount(oldPrefixLength);
+        int childrenSize = oldHasChildren
+            ? oldSize - oldHeaderSize - oldPrefixLength - (oldHasValue ? 64 : 0)
+            : 0;
 
-        // Calculate sizes
+        // Old tail = remaining prefix + value (if any) + children
+        int oldTailSize = oldRemainingPrefixLen + (oldHasValue ? 64 : 0) + childrenSize;
+        int remainingPrefixPos = prefixStartPos + matchedBits + 1;
+
         int oldChildSize = CalculateNodeSize(oldHasValue, oldHasChildren, oldRemainingPrefixLen, childrenSize);
-        int newChildSize = CalculateNodeSize(true, false, newRemainingKeyLen);
 
-        int newParentSize = CalculateNodeSize(false, true, matchedBits, oldChildSize + newChildSize);
+        // Other child: dead end if key exhausted, otherwise new key leaf
+        int newRemainingKeyLen = keyExhausted ? 0 : keyBits.Length - keyBitIndex - matchedBits - 1;
+        int otherChildSize = keyExhausted ? DeadEndSize : CalculateNodeSize(true, false, newRemainingKeyLen);
+
+        // Parent has value only if key exhausted
+        int newParentSize = CalculateNodeSize(keyExhausted, true, matchedBits, oldChildSize + otherChildSize);
         int delta = newParentSize - oldSize;
 
-        // Check space
-        if (UsedBits + delta > BufferSizeBits)
-            return false;
+        // Step 3: Calculate positions based on diverge bit
+        int newParentHeaderSize = 2 + SizeFieldBits + VarInt.GetEncodedBitCount(matchedBits);
+        int childrenStartPos = nodeBitPos + newParentHeaderSize + matchedBits + (keyExhausted ? 64 : 0);
+        int oldChildHeaderSize = 2 + SizeFieldBits + VarInt.GetEncodedBitCount(oldRemainingPrefixLen);
 
-        // Shift bits after old node
-        if (!ShiftBits(nodeBitPos + oldSize, delta))
-            return false;
-
-        // Write new parent node
-        var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        var matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
-        WriteNodeHeader(ref writer, false, true, newParentSize, ref matchedPrefix);
-
-        // Write children in order (left then right)
+        int oldChildPos, otherChildPos, newOldTailPos;
         if (oldDivergeBit == false)
         {
-            // Old content goes left, new content goes right
-            WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
-                oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
-            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, newChildSize);
+            // Old content goes left (first), other child goes right (second)
+            oldChildPos = childrenStartPos;
+            newOldTailPos = oldChildPos + oldChildHeaderSize;
+            otherChildPos = newOldTailPos + oldTailSize;
         }
         else
         {
-            // New content goes left, old content goes right
-            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, newChildSize);
-            WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
-                oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
+            // Other child goes left (first), old content goes right (second)
+            otherChildPos = childrenStartPos;
+            oldChildPos = otherChildPos + otherChildSize;
+            newOldTailPos = oldChildPos + oldChildHeaderSize;
         }
 
-        UpdateAncestorSizes(ancestors, delta);
+        int tailShiftDelta = newOldTailPos - remainingPrefixPos;
 
-        return true;
-    }
-
-    private void WriteOldContentAsChild(ref BitArrayWriter writer, bool hasValue, bool hasChildren,
-        uint[] prefixBits, int prefixStartBit, int prefixLength, long value,
-        uint[]? childrenData, int childrenSize, int totalSize)
-    {
-        var prefix = ReadOnlyBitString.Wrap(prefixBits).Slice(prefixStartBit, prefixLength);
-        WriteNodeHeader(ref writer, hasValue, hasChildren, totalSize, ref prefix);
-
-        if (hasValue)
-            writer.WriteLong(value);
-
-        // Copy children data if present
-        if (hasChildren && childrenData != null && childrenSize > 0)
-        {
-            var children = ReadOnlyBitString.Wrap(childrenData, childrenSize);
-            writer.WriteBitString(ref children);
-        }
-    }
-
-    private void WriteNewKeyAsChild(ref BitArrayWriter writer, ref ReadOnlyBitString keyBits, int startIndex, int prefixLength, long value, int totalSize)
-    {
-        var prefix = keyBits.Slice(startIndex, prefixLength);
-        WriteNodeHeader(ref writer, true, false, totalSize, ref prefix);
-
-        // Write value
-        writer.WriteLong(value);
-    }
-
-    private bool SplitNodeKeyExhausted(int nodeBitPos, int matchedBits, long newValue, List<int> ancestors)
-    {
-        // The new key ends within the existing prefix.
-        // New structure:
-        // - This node: prefix = first matchedBits, HasValue = true (new key's value), HasChildren = true
-        // - One child contains old content (remaining prefix + old value + old children)
-        // - Other child is dead end
-
-
-        // TODO: improve efficiency here by avoiding copying bits to buffer
-        // 1. calculate the new prefix size
-        // 2. calculate size of new node
-        // 3. check space
-        // 4. shift bits, don't copy any bits to buffer
-        // 5. write new node
-        // If we do it perfectly, we can start the shift exactly where the prefix diverges 
-        // so we don't even need to copy the prefix bits
-
-
-        // Read current node
-        var (oldHasValue, oldHasChildren, oldSize, oldPrefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
-        var oldPrefixBits = CopyBitsToBuffer(reader.BitPosition, oldPrefixLength);
-        reader.Skip(oldPrefixLength);
-        long oldValue = oldHasValue ? reader.ReadLong() : 0;
-
-        // Save children data if present
-        int childrenStartPos = reader.BitPosition;
-        int childrenSize = oldHasChildren ? (oldSize - (childrenStartPos - nodeBitPos)) : 0;
-        uint[]? childrenCopy = oldHasChildren && childrenSize > 0
-            ? CopyBitsToBuffer(childrenStartPos, childrenSize)
-            : null;
-
-        // The bit after the matched portion determines which child branch
-        var oldPrefixReader = new BitArrayReader(oldPrefixBits, matchedBits);
-        bool oldNextBit = oldPrefixReader.ReadBit();
-
-        // Old node's remaining prefix (after the branch bit)
-        int oldRemainingPrefixLen = oldPrefixLength - matchedBits - 1;
-
-        // Calculate sizes
-        int oldChildSize = CalculateNodeSize(oldHasValue, oldHasChildren, oldRemainingPrefixLen, childrenSize);
-
-        // New parent: HasValue=true, HasChildren=true, one child is old content, other is dead end
-        int newParentChildrenSize = oldChildSize + DeadEndSize;
-        int newParentSize = CalculateNodeSize(true, true, matchedBits, newParentChildrenSize);
-        int delta = newParentSize - oldSize;
-
-        // Check space
+        // Step 4: Check space
         if (UsedBits + delta > BufferSizeBits)
-            return false;
+            return (false, 0);
 
-        // Shift bits after old node
+        // Step 5: Shift rest-of-trie (everything after the old node)
         if (!ShiftBits(nodeBitPos + oldSize, delta))
-            return false;
+            return (false, 0);
 
-        // Write new parent node
-        var writer = new BitArrayWriter(_buffer, nodeBitPos);
-        var matchedPrefix = ReadOnlyBitString.Wrap(oldPrefixBits).Slice(0, matchedBits);
-        WriteNodeHeader(ref writer, true, true, newParentSize, ref matchedPrefix);
-
-        // Write new value
-        writer.WriteLong(newValue);
-
-        // Write children: old content on one side, dead end on other
-        if (oldNextBit == false)
+        // Step 6: Shift old tail to its final position
+        if (oldTailSize > 0 && tailShiftDelta != 0)
         {
-            // Old content goes left
-            WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
-                oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
+            BitArrayWriter.ShiftBitsRight(_buffer, remainingPrefixPos, oldTailSize, tailShiftDelta);
+        }
+
+        // Step 7: Write new parent header
+        var writer = new BitArrayWriter(_buffer, nodeBitPos);
+        writer.WriteBit(keyExhausted); // HasValue
+        writer.WriteBit(true);         // HasChildren
+        WriteSize(ref writer, newParentSize);
+        VarInt.Write(ref writer, matchedBits);
+
+        // Step 8: Copy matched prefix (dest <= source, so safe)
+        if (matchedBits > 0)
+        {
+            var matchedPrefix = ReadOnlyBitString.Wrap(_buffer).Slice(prefixStartPos, matchedBits);
+            writer.WriteBitString(ref matchedPrefix);
+        }
+
+        // Step 9: Write parent value if key exhausted
+        if (keyExhausted)
+        {
+            writer.WriteLong(newValue);
+        }
+
+        // Step 10: Write children in order
+        if (oldDivergeBit == false)
+        {
+            // Old child header (old tail is already in place after it)
+            WriteOldChildHeader(ref writer, oldHasValue, oldHasChildren, oldChildSize, oldRemainingPrefixLen);
+            // Other child at the end
+            writer.Seek(otherChildPos);
+            WriteOtherChild(ref writer, ref keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, otherChildSize, keyExhausted);
+        }
+        else
+        {
+            // Other child first
+            WriteOtherChild(ref writer, ref keyBits, keyBitIndex + matchedBits + 1, newRemainingKeyLen, newValue, otherChildSize, keyExhausted);
+            // Old child header (old tail is already in place after it)
+            WriteOldChildHeader(ref writer, oldHasValue, oldHasChildren, oldChildSize, oldRemainingPrefixLen);
+        }
+
+        return (true, delta);
+    }
+
+    /// <summary>
+    /// Write just the header for the old content as a child node.
+    /// The prefix, value, and children data are already in place after the header position.
+    /// </summary>
+    private static void WriteOldChildHeader(ref BitArrayWriter writer, bool hasValue, bool hasChildren, int nodeSize, int prefixLength)
+    {
+        writer.WriteBit(hasValue);
+        writer.WriteBit(hasChildren);
+        WriteSize(ref writer, nodeSize);
+        VarInt.Write(ref writer, prefixLength);
+    }
+
+    /// <summary>
+    /// Write the "other" child in a split: either a new key leaf or a dead end.
+    /// </summary>
+    private static void WriteOtherChild(ref BitArrayWriter writer, ref ReadOnlyBitString keyBits, int startIndex, int prefixLength, long value, int totalSize, bool isDeadEnd)
+    {
+        if (isDeadEnd)
+        {
             WriteDeadEnd(ref writer);
         }
         else
         {
-            // Old content goes right
-            WriteDeadEnd(ref writer);
-            WriteOldContentAsChild(ref writer, oldHasValue, oldHasChildren, oldPrefixBits, matchedBits + 1,
-                oldRemainingPrefixLen, oldValue, childrenCopy, childrenSize, oldChildSize);
+            var prefix = keyBits.Slice(startIndex, prefixLength);
+            WriteNodeHeader(ref writer, true, false, totalSize, ref prefix);
+            writer.WriteLong(value);
         }
-
-        UpdateAncestorSizes(ancestors, delta);
-
-        return true;
     }
 
-    private bool AddChildToLeaf(int nodeBitPos, ref ReadOnlyBitString keyBits, int keyBitIndex, long value, List<int> ancestors)
+    private (bool success, int delta) AddChildToLeaf(int nodeBitPos, ref ReadOnlyBitString keyBits, int keyBitIndex, long value)
     {
         // Read current leaf node
         var (hasValue, _, oldSize, prefixLength) = ReadFullNodeHeader(nodeBitPos, out var reader);
@@ -637,10 +595,10 @@ public class FlatTrie : ITrie
         int delta = newSize - oldSize;
 
         if (UsedBits + delta > BufferSizeBits)
-            return false;
+            return (false, 0);
 
         if (!ShiftBits(nodeBitPos + oldSize, delta))
-            return false;
+            return (false, 0);
 
         // Rewrite node
         var writer = new BitArrayWriter(_buffer, nodeBitPos);
@@ -653,39 +611,35 @@ public class FlatTrie : ITrie
         if (nextBit == false)
         {
             // New child goes left
-            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
+            WriteOtherChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newChildSize, isDeadEnd: false);
             WriteDeadEnd(ref writer);
         }
         else
         {
             // New child goes right
             WriteDeadEnd(ref writer);
-            WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newChildSize);
+            WriteOtherChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newChildSize, isDeadEnd: false);
         }
 
-        UpdateAncestorSizes(ancestors, delta);
-
-        return true;
+        return (true, delta);
     }
 
-    private bool ReplaceDeadEnd(int deadEndPos, ref ReadOnlyBitString keyBits, int keyBitIndex, long value, List<int> ancestors)
+    private (bool success, int delta) ReplaceDeadEnd(int deadEndPos, ref ReadOnlyBitString keyBits, int keyBitIndex, long value)
     {
         int remainingKeyLen = keyBits.Length - keyBitIndex;
         int newNodeSize = CalculateNodeSize(true, false, remainingKeyLen);
         int delta = newNodeSize - DeadEndSize;
 
         if (UsedBits + delta > BufferSizeBits)
-            return false;
+            return (false, 0);
 
         if (!ShiftBits(deadEndPos + DeadEndSize, delta))
-            return false;
+            return (false, 0);
 
         var writer = new BitArrayWriter(_buffer, deadEndPos);
-        WriteNewKeyAsChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newNodeSize);
+        WriteOtherChild(ref writer, ref keyBits, keyBitIndex, remainingKeyLen, value, newNodeSize, isDeadEnd: false);
 
-        UpdateAncestorSizes(ancestors, delta);
-
-        return true;
+        return (true, delta);
     }
 
     private bool ShiftBits(int fromBitPos, int delta)
@@ -727,25 +681,6 @@ public class FlatTrie : ITrie
     {
         int bitsToMove = UsedBits - fromBitPos;
         BitArrayWriter.ShiftBitsLeft(_buffer, fromBitPos, bitsToMove, delta);
-    }
-
-    private void UpdateAncestorSizes(List<int> ancestors, int delta)
-    {
-        // Update sizes for all ancestors (collected during descent, before modification)
-        if (delta == 0 || ancestors.Count == 0)
-            return;
-
-        foreach (int nodePos in ancestors)
-        {
-            int sizePos = nodePos + 2; // after HasValue and HasChildren bits
-            var reader = new BitArrayReader(_buffer, sizePos);
-
-            int currentSize = ReadSize(ref reader);
-            int newSize = currentSize + delta;
-
-            var writer = new BitArrayWriter(_buffer, sizePos);
-            WriteSize(ref writer, newSize);
-        }
     }
 
     /// <summary>

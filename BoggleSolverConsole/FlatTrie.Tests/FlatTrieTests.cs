@@ -554,4 +554,50 @@ public class FlatTrieTests
         _output.WriteLine($"Total prefix bits: {stats.TotalPrefixBits}");
         _output.WriteLine($"Max prefix length: {stats.MaxPrefixLength}");
     }
+
+    [Fact]
+    public void RewriteNodeWithValue_AddValueToInternalNode()
+    {
+        // This test exercises RewriteNodeWithValue by:
+        // 1. Creating an internal node with children but no value
+        // 2. Adding a value to that internal node
+        //
+        // To create an internal node with no value, we need two keys that diverge
+        // at a byte boundary. In UTF-8:
+        // - ASCII chars (0x00-0x7F) start with bit 0
+        // - Multi-byte sequences start with bit 1 (0xC0+)
+        //
+        // So "ab" (0x61 0x62) and "aé" (0x61 0xC3 0xA9) diverge at bit 8,
+        // making "a" the exact common prefix at the bit level.
+
+        var trie = new FlatTrie();
+
+        // Insert two keys that diverge right after "a"
+        Assert.True(trie.TryWrite("ab", 1), "Failed to write 'ab'");
+        Assert.True(trie.TryWrite("aé", 2), "Failed to write 'aé'");
+
+        // Verify both keys exist
+        Assert.True(trie.TryRead("ab", out long v1), "'ab' not found after initial inserts");
+        Assert.Equal(1, v1);
+        Assert.True(trie.TryRead("aé", out long v2), "'aé' not found after initial inserts");
+        Assert.Equal(2, v2);
+
+        // "a" should not exist yet (internal node has no value)
+        Assert.False(trie.TryRead("a", out _), "'a' should not exist before adding value");
+
+        // Now add value to "a" - this triggers RewriteNodeWithValue
+        Assert.True(trie.TryWrite("a", 3), "Failed to write 'a'");
+
+        // All three keys should now be readable
+        Assert.True(trie.TryRead("a", out long v3), "'a' not found after RewriteNodeWithValue");
+        Assert.Equal(3, v3);
+
+        // BUG: If RewriteNodeWithValue doesn't shift children properly,
+        // these reads will fail or return wrong values
+        Assert.True(trie.TryRead("ab", out long v1b), "'ab' not found after adding 'a'");
+        Assert.Equal(1, v1b);
+
+        Assert.True(trie.TryRead("aé", out long v2b), "'aé' not found after adding 'a'");
+        Assert.Equal(2, v2b);
+    }
 }
