@@ -165,6 +165,43 @@ public class FlatTrieTests
     }
 
     [Fact]
+    public void Delete_PrefixKey_DoesNotCorruptExtendedKey()
+    {
+        // This test demonstrates the bug in Delete:
+        // When deleting "Hello", the 64-bit value is orphaned but not removed,
+        // corrupting the child pointer offsets for "Hello World".
+        var trie = new FlatTrie();
+
+        // Add "Hello" first (becomes a leaf with value)
+        Assert.True(trie.TryWrite("Hello", 1));
+        Assert.True(trie.TryRead("Hello", out long v1));
+        Assert.Equal(1, v1);
+
+        // Add "Hello World" (Hello becomes internal node with value + child)
+        Assert.True(trie.TryWrite("Hello World", 2));
+        Assert.True(trie.TryRead("Hello World", out long v2));
+        Assert.Equal(2, v2);
+
+        // Both should be readable before delete
+        Assert.True(trie.TryRead("Hello", out v1));
+        Assert.Equal(1, v1);
+        Assert.True(trie.TryRead("Hello World", out v2));
+        Assert.Equal(2, v2);
+
+        // Delete "Hello" - this clears HasValue but doesn't shift children
+        trie.Delete("Hello");
+
+        // "Hello" should no longer exist
+        Assert.False(trie.TryRead("Hello", out _));
+
+        // BUG: "Hello World" should still exist but may be corrupted
+        // because Delete doesn't shift the children after removing the value
+        Assert.True(trie.TryRead("Hello World", out long v3),
+            "Hello World should still exist after deleting Hello");
+        Assert.Equal(2, v3);
+    }
+
+    [Fact]
     public void LargeValue()
     {
         var trie = new FlatTrie();
