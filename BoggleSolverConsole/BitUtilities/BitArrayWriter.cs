@@ -158,6 +158,7 @@ public ref struct BitArrayWriter
     /// Shift bits left (shrink) by delta bits.
     /// Bits from [fromBitPos, fromBitPos+bitsToMove) are moved to [fromBitPos-delta, fromBitPos-delta+bitsToMove).
     /// Bits before (fromBitPos-delta) are preserved.
+    /// Uses word-level barrel shift for efficiency.
     /// </summary>
     public static void ShiftBitsLeft(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
     {
@@ -165,42 +166,192 @@ public ref struct BitArrayWriter
             return;
 
         int dstStartBit = fromBitPos - delta;
-        var srcSlice = ReadOnlyBitString.Wrap(buffer).Slice(fromBitPos, bitsToMove);
-        var writer = new BitArrayWriter(buffer, dstStartBit);
-        writer.WriteBitString(ref srcSlice);
+        int srcBitInWord = fromBitPos & 31;
+        int dstBitInWord = dstStartBit & 31;
+        int rot = delta & 31;
+        int wordShift = delta >> 5;
+
+        // Fast path 1: both source and dest are word-aligned - pure word copy
+        if (srcBitInWord == 0 && dstBitInWord == 0)
+        {
+            int srcStartWord = fromBitPos >> 5;
+            int srcEndWord = (fromBitPos + bitsToMove - 1) >> 5;
+
+            for (int srcWord = srcStartWord; srcWord <= srcEndWord; srcWord++)
+            {
+                int dstWord = srcWord - wordShift;
+                if (dstWord >= 0)
+                    buffer[dstWord] = buffer[srcWord];
+            }
+            return;
+        }
+
+        // Fast path 2: delta is word-aligned (common case like 64-bit value removal)
+        // Source and dest have same bit offset, so middle words can be copied directly
+        if (rot == 0)
+        {
+            int dstStartWord = dstStartBit >> 5;
+            int dstEndWord = (dstStartBit + bitsToMove - 1) >> 5;
+            int bitOffset = dstBitInWord; // same as srcBitInWord
+
+            for (int dstWord = dstStartWord; dstWord <= dstEndWord; dstWord++)
+            {
+                int srcWord = dstWord + wordShift;
+                bool isFirstWord = (dstWord == dstStartWord) && (bitOffset != 0);
+                bool isLastWord = (dstWord == dstEndWord);
+                int lastBitInRange = (dstStartBit + bitsToMove - 1) & 31;
+
+                if (isFirstWord || (isLastWord && lastBitInRange != 31))
+                {
+                    // Partial word - need to preserve some bits
+                    int startBit = isFirstWord ? bitOffset : 0;
+                    int endBit = isLastWord ? lastBitInRange + 1 : 32;
+                    uint mask = ((1u << (endBit - startBit)) - 1) << startBit;
+                    if (endBit - startBit == 32) mask = uint.MaxValue;
+
+                    uint srcValue = (srcWord < buffer.Length) ? buffer[srcWord] : 0;
+                    buffer[dstWord] = (buffer[dstWord] & ~mask) | (srcValue & mask);
+                }
+                else
+                {
+                    // Complete word - direct copy
+                    buffer[dstWord] = buffer[srcWord];
+                }
+            }
+            return;
+        }
+
+        // General case: non-word-aligned delta, use barrel shift with boundary preservation
+        int dstEndBit = dstStartBit + bitsToMove;
+        int dstStartWordGen = dstStartBit >> 5;
+        int dstEndWordGen = (dstEndBit - 1) >> 5;
+
+        for (int dstWord = dstStartWordGen; dstWord <= dstEndWordGen; dstWord++)
+        {
+            int wordStartBit = dstWord << 5;
+            int wordEndBit = wordStartBit + 32;
+
+            int writeStartBit = Math.Max(wordStartBit, dstStartBit);
+            int writeEndBit = Math.Min(wordEndBit, dstEndBit);
+            int bitsToWrite = writeEndBit - writeStartBit;
+
+            if (bitsToWrite <= 0) continue;
+
+            // For barrel shift: dst[i] bits come from src[i+wordShift] >> rot | src[i+wordShift+1] << (32-rot)
+            int srcWordLow = dstWord + wordShift;
+            int srcWordHigh = srcWordLow + 1;
+
+            uint lowBits = (srcWordLow >= 0 && srcWordLow < buffer.Length) ? buffer[srcWordLow] : 0;
+            uint highBits = (srcWordHigh >= 0 && srcWordHigh < buffer.Length) ? buffer[srcWordHigh] : 0;
+
+            uint shifted = (lowBits >> rot) | (highBits << (32 - rot));
+
+            // Apply mask for boundary words
+            int dstBitOffset = writeStartBit & 31;
+            uint valueMask = bitsToWrite == 32 ? uint.MaxValue : (1u << bitsToWrite) - 1;
+            uint positionedMask = valueMask << dstBitOffset;
+
+            buffer[dstWord] = (buffer[dstWord] & ~positionedMask) | (shifted & positionedMask);
+        }
     }
 
     /// <summary>
     /// Shift bits right (expand) by delta bits.
     /// Bits from [fromBitPos, fromBitPos+bitsToMove) are moved to [fromBitPos+delta, fromBitPos+delta+bitsToMove).
     /// The gap [fromBitPos, fromBitPos+delta) is left unchanged (caller will overwrite).
-    /// Copies backwards (right to left) to avoid overwriting source before reading.
+    /// Uses word-level barrel shift for efficiency. Works backwards to avoid overwriting source.
     /// </summary>
     public static void ShiftBitsRight(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
     {
         if (bitsToMove <= 0 || delta <= 0)
             return;
 
-        // Copy backwards in 32-bit chunks for efficiency
-        int remaining = bitsToMove;
-        int srcPos = fromBitPos + bitsToMove;
-        int dstPos = srcPos + delta;
-        var bitString = ReadOnlyBitString.Wrap(buffer);
+        int dstStartBit = fromBitPos + delta;
+        int srcBitInWord = fromBitPos & 31;
+        int dstBitInWord = dstStartBit & 31;
+        int rot = delta & 31;
+        int wordShift = delta >> 5;
 
-        while (remaining > 0)
+        // Fast path 1: both source and dest are word-aligned - pure word copy
+        if (srcBitInWord == 0 && dstBitInWord == 0)
         {
-            int chunkSize = Math.Min(remaining, 32);
-            srcPos -= chunkSize;
-            dstPos -= chunkSize;
+            int srcStartWord = fromBitPos >> 5;
+            int srcEndWord = (fromBitPos + bitsToMove - 1) >> 5;
 
-            // Read chunk from source using ToBitPrefix
-            uint chunk = bitString.ToBitPrefix(srcPos, chunkSize).Bits;
+            // Copy backwards to avoid overwriting source
+            for (int srcWord = srcEndWord; srcWord >= srcStartWord; srcWord--)
+                buffer[srcWord + wordShift] = buffer[srcWord];
+            return;
+        }
 
-            // Write chunk to destination
-            var writer = new BitArrayWriter(buffer, dstPos);
-            writer.WriteBits(chunk, chunkSize);
+        // Fast path 2: delta is word-aligned (common case like 64-bit value insertion)
+        // Source and dest have same bit offset, so middle words can be copied directly
+        if (rot == 0)
+        {
+            int dstStartWord = dstStartBit >> 5;
+            int dstEndWord = (dstStartBit + bitsToMove - 1) >> 5;
+            int bitOffset = dstBitInWord;
 
-            remaining -= chunkSize;
+            // Copy backwards to avoid overwriting source
+            for (int dstWord = dstEndWord; dstWord >= dstStartWord; dstWord--)
+            {
+                int srcWord = dstWord - wordShift;
+                bool isFirstWord = (dstWord == dstStartWord) && (bitOffset != 0);
+                bool isLastWord = (dstWord == dstEndWord);
+                int lastBitInRange = (dstStartBit + bitsToMove - 1) & 31;
+
+                if (isFirstWord || (isLastWord && lastBitInRange != 31))
+                {
+                    // Partial word - need to preserve some bits
+                    int startBit = isFirstWord ? bitOffset : 0;
+                    int endBit = isLastWord ? lastBitInRange + 1 : 32;
+                    uint mask = ((1u << (endBit - startBit)) - 1) << startBit;
+                    if (endBit - startBit == 32) mask = uint.MaxValue;
+
+                    uint srcValue = (srcWord >= 0 && srcWord < buffer.Length) ? buffer[srcWord] : 0;
+                    buffer[dstWord] = (buffer[dstWord] & ~mask) | (srcValue & mask);
+                }
+                else
+                {
+                    // Complete word - direct copy
+                    buffer[dstWord] = buffer[srcWord];
+                }
+            }
+            return;
+        }
+
+        // General case: non-word-aligned delta, use barrel shift
+        int dstEndBit = dstStartBit + bitsToMove;
+        int dstStartWordGen = dstStartBit >> 5;
+        int dstEndWordGen = (dstEndBit - 1) >> 5;
+
+        // Process backwards to avoid overwriting source
+        for (int dstWord = dstEndWordGen; dstWord >= dstStartWordGen; dstWord--)
+        {
+            int wordStartBit = dstWord << 5;
+            int wordEndBit = wordStartBit + 32;
+
+            int writeStartBit = Math.Max(wordStartBit, dstStartBit);
+            int writeEndBit = Math.Min(wordEndBit, dstEndBit);
+            int bitsToWrite = writeEndBit - writeStartBit;
+
+            if (bitsToWrite <= 0) continue;
+
+            // For barrel shift right: dst[i] = (src[i-wordShift] << rot) | (src[i-wordShift-1] >> (32-rot))
+            int srcWordHigh = dstWord - wordShift;
+            int srcWordLow = srcWordHigh - 1;
+
+            uint highBits = (srcWordHigh >= 0 && srcWordHigh < buffer.Length) ? buffer[srcWordHigh] : 0;
+            uint lowBits = (srcWordLow >= 0 && srcWordLow < buffer.Length) ? buffer[srcWordLow] : 0;
+
+            uint shifted = (highBits << rot) | (lowBits >> (32 - rot));
+
+            // Apply mask for boundary words
+            int dstBitOffset = writeStartBit & 31;
+            uint valueMask = bitsToWrite == 32 ? uint.MaxValue : (1u << bitsToWrite) - 1;
+            uint positionedMask = valueMask << dstBitOffset;
+
+            buffer[dstWord] = (buffer[dstWord] & ~positionedMask) | (shifted & positionedMask);
         }
     }
 }
