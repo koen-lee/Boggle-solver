@@ -446,7 +446,7 @@ public ref struct BitArrayWriter
         uint highBitsLoop = (firstSrcWordHigh >= 0 && firstSrcWordHigh < buffer.Length) ? buffer[firstSrcWordHigh] : 0;
 
         // SSE2 path: process 4 words at a time
-        if (Sse2.IsSupported && dstEndWord - dstStartWord >= 7)
+        if (Sse2.IsSupported && dstWord - 3 >= dstStartWord)
         {
             while (dstWord - 3 >= dstStartWord)
             {
