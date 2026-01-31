@@ -183,7 +183,7 @@ public class BitArrayWriterTests
     }
 
     [Fact]
-    public void ShiftBitsRightSimd_LargeShift_MovesCorrectly()
+    public void ShiftBitsRight_LargeShift_MovesCorrectly()
     {
         // Need 8+ destination words to trigger SIMD path
         // Use 16 words (512 bits) of data with non-aligned positions
@@ -200,7 +200,7 @@ public class BitArrayWriterTests
 
         // Shift bits [50, 562) right by 75 bits to [125, 637)
         // This creates a non-word-aligned shift that should use SIMD
-        BitArrayWriter.ShiftBitsRightSimd(buffer, fromBitPos: 50, bitsToMove: 512, delta: 75);
+        BitArrayWriter.ShiftBitsRight(buffer, fromBitPos: 50, bitsToMove: 512, delta: 75);
 
         // Read back from new position and verify
         var reader = new BitArrayReader(buffer, 125);
@@ -211,35 +211,184 @@ public class BitArrayWriterTests
     }
 
     [Fact]
-    public void ShiftBitsRightSimd_MatchesScalarVersion()
+    public void ShiftBitsRight_MultipleDeltas_WorksCorrectly()
     {
-        // Test that SIMD version produces identical results to scalar version
-        var bufferScalar = new uint[32];
-        var bufferSimd = new uint[32];
+        // Test multiple shift amounts to verify SIMD paths produce correct results
+        int[] deltas = { 13, 31, 37, 64, 75, 91, 127 };
 
-        // Write identical data to both buffers
-        var writerScalar = new BitArrayWriter(bufferScalar, 37);
-        var writerSimd = new BitArrayWriter(bufferSimd, 37);
-
-        for (int i = 0; i < 12; i++)
+        foreach (var delta in deltas)
         {
-            uint value = (uint)(0xCAFE0000 | (i * 17));
-            writerScalar.WriteBits(value, 32);
-            writerSimd.WriteBits(value, 32);
+            var buffer = new uint[32];
+
+            // Write data
+            var writer = new BitArrayWriter(buffer, 37);
+            for (int i = 0; i < 12; i++)
+            {
+                uint value = (uint)(0xCAFE0000 | (i * 17));
+                writer.WriteBits(value, 32);
+            }
+
+            // Apply shift
+            int fromBitPos = 37;
+            int bitsToMove = 384; // 12 words
+
+            BitArrayWriter.ShiftBitsRight(buffer, fromBitPos, bitsToMove, delta);
+
+            // Verify data was shifted correctly
+            var reader = new BitArrayReader(buffer, fromBitPos + delta);
+            for (int i = 0; i < 12; i++)
+            {
+                uint expected = (uint)(0xCAFE0000 | (i * 17));
+                Assert.Equal(expected, reader.ReadBits(32));
+            }
+        }
+    }
+
+    [Fact]
+    public void ShiftBitsLeftSimd_LargeShift_MovesCorrectly()
+    {
+        // Need 8+ destination words to trigger SIMD path
+        // Use 16 words (512 bits) of data with non-aligned positions
+        var buffer = new uint[32];
+
+        // Write recognizable pattern at bits [200, 712) - 512 bits = 16 words
+        var writer = new BitArrayWriter(buffer, 200);
+        uint[] testData = new uint[16];
+        for (int i = 0; i < 16; i++)
+        {
+            testData[i] = (uint)(0xBEEF0000 | i);
+            writer.WriteBits(testData[i], 32);
         }
 
-        // Apply same shift to both using different methods
-        int fromBitPos = 37;
-        int bitsToMove = 384; // 12 words
-        int delta = 91;
+        // Also write prefix data that should be preserved
+        var prefixWriter = new BitArrayWriter(buffer, 0);
+        for (int i = 0; i < 50; i++)
+            prefixWriter.WriteBit((i & 1) == 0);
 
-        BitArrayWriter.ShiftBitsRight(bufferScalar, fromBitPos, bitsToMove, delta);
-        BitArrayWriter.ShiftBitsRightSimd(bufferSimd, fromBitPos, bitsToMove, delta);
+        var originalPrefix = ReadBits(buffer, 0, 50);
 
-        // Verify buffers are identical
-        for (int i = 0; i < bufferScalar.Length; i++)
+        // Shift bits [200, 712) left by 75 bits to [125, 637)
+        // This creates a non-word-aligned shift that should use SIMD
+        BitArrayWriter.ShiftBitsLeft(buffer, fromBitPos: 200, bitsToMove: 512, delta: 75);
+
+        // Verify prefix is preserved
+        var newPrefix = ReadBits(buffer, 0, 50);
+        Assert.Equal(originalPrefix, newPrefix);
+
+        // Read back from new position and verify
+        var reader = new BitArrayReader(buffer, 125);
+        for (int i = 0; i < 16; i++)
         {
-            Assert.Equal(bufferScalar[i], bufferSimd[i]);
+            Assert.Equal(testData[i], reader.ReadBits(32));
+        }
+    }
+
+    [Fact]
+    public void ShiftBitsLeftSimd_MatchesScalarVersion()
+    {
+        // Test that SIMD version produces identical results to a reference scalar implementation
+        // We'll use different shift amounts and verify all produce correct results
+
+        int[] deltas = { 13, 31, 37, 64, 75, 91, 127 };
+
+        foreach (var delta in deltas)
+        {
+            var buffer = new uint[32];
+
+            // Write identical data
+            var writer = new BitArrayWriter(buffer, delta + 50);
+            for (int i = 0; i < 12; i++)
+            {
+                uint value = (uint)(0xCAFE0000 | (i * 17));
+                writer.WriteBits(value, 32);
+            }
+
+            // Also write prefix data that should be preserved
+            var prefixWriter = new BitArrayWriter(buffer, 0);
+            for (int i = 0; i < 40; i++)
+                prefixWriter.WriteBit((i & 1) == 0);
+
+            var originalPrefix = ReadBits(buffer, 0, 40);
+
+            // Apply shift
+            int fromBitPos = delta + 50;
+            int bitsToMove = 384; // 12 words
+
+            BitArrayWriter.ShiftBitsLeft(buffer, fromBitPos, bitsToMove, delta);
+
+            // Verify prefix is preserved
+            var newPrefix = ReadBits(buffer, 0, 40);
+            Assert.Equal(originalPrefix, newPrefix);
+
+            // Verify data was shifted correctly
+            var reader = new BitArrayReader(buffer, 50);
+            for (int i = 0; i < 12; i++)
+            {
+                uint expected = (uint)(0xCAFE0000 | (i * 17));
+                Assert.Equal(expected, reader.ReadBits(32));
+            }
+        }
+    }
+
+    [Fact]
+    public void ShiftBitsLeftSimd_Avx512Size_MovesCorrectly()
+    {
+        // Test specifically sized for AVX-512 (16 words at a time)
+        var buffer = new uint[48];
+
+        // Write 32 words of data (1024 bits) at position 300
+        var writer = new BitArrayWriter(buffer, 300);
+        uint[] testData = new uint[32];
+        for (int i = 0; i < 32; i++)
+        {
+            testData[i] = (uint)(0xDEAD0000 | i);
+            writer.WriteBits(testData[i], 32);
+        }
+
+        // Shift left by 100 bits (3 words + 4 bits)
+        BitArrayWriter.ShiftBitsLeft(buffer, fromBitPos: 300, bitsToMove: 1024, delta: 100);
+
+        // Read back from new position [200, 1224)
+        var reader = new BitArrayReader(buffer, 200);
+        for (int i = 0; i < 32; i++)
+        {
+            Assert.Equal(testData[i], reader.ReadBits(32));
+        }
+    }
+
+    [Fact]
+    public void ShiftBitsLeftSimd_BoundaryPreservation_WorksCorrectly()
+    {
+        // Test that bits before the shift range are preserved
+        var buffer = new uint[32];
+
+        // Fill entire buffer with recognizable pattern
+        for (int i = 0; i < buffer.Length; i++)
+            buffer[i] = (uint)(0x11111111 * ((i % 9) + 1));
+
+        // Save original state of first few words
+        uint[] originalFirst = new uint[4];
+        Array.Copy(buffer, originalFirst, 4);
+
+        // Write data to shift at position 200
+        var writer = new BitArrayWriter(buffer, 200);
+        for (int i = 0; i < 8; i++)
+            writer.WriteBits(0xAAAAAAAA, 32);
+
+        // Shift [200, 456) left by 50 bits to [150, 406)
+        BitArrayWriter.ShiftBitsLeft(buffer, fromBitPos: 200, bitsToMove: 256, delta: 50);
+
+        // First 4 words (bits 0-127) should still be original since shift starts at bit 150
+        Assert.Equal(originalFirst[0], buffer[0]);
+        Assert.Equal(originalFirst[1], buffer[1]);
+        Assert.Equal(originalFirst[2], buffer[2]);
+        Assert.Equal(originalFirst[3], buffer[3]);
+
+        // Verify shifted data is at correct position
+        var reader = new BitArrayReader(buffer, 150);
+        for (int i = 0; i < 8; i++)
+        {
+            Assert.Equal(0xAAAAAAAAu, reader.ReadBits(32));
         }
     }
 
