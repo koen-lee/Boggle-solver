@@ -517,4 +517,108 @@ public ref struct BitArrayWriter
             buffer[dstEndWord] = (savedLastWord & preserveMask) | (buffer[dstEndWord] & ~preserveMask);
         }
     }
+
+
+        /// <summary>
+    /// SIMD-optimized shift right for large multi-word shifts.
+    /// Uses SSE2 to process 4 destination words at a time.
+    /// Call this instead of ShiftBitsRight when bitsToMove is large (e.g., >= 256 bits / 8 words).
+    /// </summary>
+    public static void ShiftBitsRightSimd_nothreshold(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
+    {
+        if (bitsToMove <= 0 || delta <= 0)
+            return;
+
+        int dstStartBit = fromBitPos + delta;
+        int rot = delta & 31;
+        int wordShift = delta >> 5;
+
+        int dstEndBit = dstStartBit + bitsToMove;
+        int dstStartWord = dstStartBit >> 5;
+        int dstEndWord = (dstEndBit - 1) >> 5;
+        int firstWordOffset = dstStartBit & 31;
+        int lastWordEndBit = ((dstEndBit - 1) & 31) + 1;
+
+        uint savedFirstWord = buffer[dstStartWord];
+        uint savedLastWord = buffer[dstEndWord];
+
+        int rightShift = 32 - rot;
+        int dstWord = dstEndWord;
+
+        // Pre-load high bits for the chain
+        int firstSrcWordHigh = dstEndWord - wordShift;
+        uint highBitsLoop = (firstSrcWordHigh >= 0 && firstSrcWordHigh < buffer.Length) ? buffer[firstSrcWordHigh] : 0;
+
+        // SSE2 path: process 4 words at a time
+        if (Sse2.IsSupported)
+        {
+            while (dstWord - 3 >= dstStartWord)
+            {
+                int srcBase = dstWord - wordShift;
+                int srcLow = srcBase - 4;
+
+                // Bounds check for all source words needed
+                if (srcLow < 0 || srcBase >= buffer.Length)
+                    break;
+
+                // Load source words for 4 destination words
+                // high vector: [s-3, s-2, s-1, s] from buffer[srcBase-3..srcBase]
+                // low vector:  [s-4, s-3, s-2, s-1] from buffer[srcBase-4..srcBase-1]
+                var high = Vector128.LoadUnsafe(ref buffer[srcBase - 3]);
+                var low = Vector128.LoadUnsafe(ref buffer[srcBase - 4]);
+
+                // Interleave to form 64-bit (high << 32) | low pairs
+                // UnpackLow(low, high) = [l0, h0, l1, h1] as dwords
+                //   = [(h0<<32)|l0, (h1<<32)|l1] as qwords (little endian)
+                // UnpackHigh(low, high) = [l2, h2, l3, h3] as dwords
+                //   = [(h2<<32)|l2, (h3<<32)|l3] as qwords
+                var interleaved01 = Sse2.UnpackLow(low, high);
+                var interleaved23 = Sse2.UnpackHigh(low, high);
+
+                // Shift right by (32 - rot) to get barrel shift result
+                var shifted01 = Sse2.ShiftRightLogical(interleaved01.AsUInt64(), (byte)rightShift);
+                var shifted23 = Sse2.ShiftRightLogical(interleaved23.AsUInt64(), (byte)rightShift);
+
+                // Extract lower 32 bits of each 64-bit value
+                // Shuffle to get [result0, result1, ?, ?] and [result2, result3, ?, ?]
+                var s01 = Sse2.Shuffle(shifted01.AsInt32(), 0b00_00_10_00);
+                var s23 = Sse2.Shuffle(shifted23.AsInt32(), 0b00_00_10_00);
+
+                // Combine low halves: [result0, result1, result2, result3]
+                var result = Sse.MoveLowToHigh(s01.AsSingle(), s23.AsSingle()).AsUInt32();
+
+                // Store to [dstWord-3, dstWord-2, dstWord-1, dstWord]
+                result.StoreUnsafe(ref buffer[dstWord - 3]);
+
+                // Update for next iteration
+                highBitsLoop = buffer[srcBase - 4];
+                dstWord -= 4;
+            }
+        }
+
+        // Scalar fallback for remaining words
+        while (dstWord >= dstStartWord)
+        {
+            int srcWordLow = dstWord - wordShift - 1;
+            uint lowBits = (srcWordLow >= 0 && srcWordLow < buffer.Length) ? buffer[srcWordLow] : 0;
+
+            ulong combined = ((ulong)highBitsLoop << 32) | lowBits;
+            buffer[dstWord] = (uint)(combined >> rightShift);
+
+            highBitsLoop = lowBits;
+            dstWord--;
+        }
+
+        // Fix up boundary words
+        if (firstWordOffset != 0)
+        {
+            uint preserveMask = (1u << firstWordOffset) - 1;
+            buffer[dstStartWord] = (savedFirstWord & preserveMask) | (buffer[dstStartWord] & ~preserveMask);
+        }
+        if (lastWordEndBit != 32)
+        {
+            uint preserveMask = uint.MaxValue << lastWordEndBit;
+            buffer[dstEndWord] = (savedLastWord & preserveMask) | (buffer[dstEndWord] & ~preserveMask);
+        }
+    }
 }

@@ -14,6 +14,9 @@ public class Program
                 case "shift":
                     BenchmarkRunner.Run<ShiftBitsRightBenchmarks>();
                     break;
+                case "threshold":
+                    BenchmarkRunner.Run<ThresholdBenchmarks>();
+                    break;
                 case "trie":
                 default:
                     BenchmarkRunner.Run<FlatTrieBenchmarks>();
@@ -22,7 +25,7 @@ public class Program
         }
         else
         {
-            Console.WriteLine("Run with --benchmark [trie|shift] to execute benchmarks");
+            Console.WriteLine("Run with --benchmark [trie|shift|threshold] to execute benchmarks");
             Console.WriteLine("Or use 'dotnet test' to run unit tests");
         }
     }
