@@ -417,11 +417,12 @@ public ref struct BitArrayWriter
 
     /// <summary>
     /// SIMD-optimized shift right for large multi-word shifts.
-    /// Uses AVX2 to process 8 destination words at a time, falling back to SSE2 (4 words).
+    /// Uses AVX-512 (16 words), AVX2 (8 words), or SSE2 (4 words) depending on hardware support.
     /// Call this instead of ShiftBitsRight when bitsToMove is large (e.g., >= 256 bits / 8 words).
     /// </summary>
     public static void ShiftBitsRightSimd(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
     {
+        #pragma warning disable CA1857 // Shift operand can't be a constant here 
         if (bitsToMove <= 0 || delta <= 0)
             return;
 
@@ -444,6 +445,48 @@ public ref struct BitArrayWriter
         // Pre-load high bits for the chain
         int firstSrcWordHigh = dstEndWord - wordShift;
         uint highBitsLoop = (firstSrcWordHigh >= 0 && firstSrcWordHigh < buffer.Length) ? buffer[firstSrcWordHigh] : 0;
+
+        // AVX-512 path: process 16 words at a time
+        if (Avx512F.IsSupported && dstWord - 15 >= dstStartWord)
+        {
+            while (dstWord - 15 >= dstStartWord)
+            {
+                int srcBase = dstWord - wordShift;
+                int srcLow = srcBase - 16;
+
+                // Bounds check for all source words needed
+                if (srcLow < 0 || srcBase >= buffer.Length)
+                    break;
+
+                // Load source words for 16 destination words
+                var high = Vector512.LoadUnsafe(ref buffer[srcBase - 15]);
+                var low = Vector512.LoadUnsafe(ref buffer[srcBase - 16]);
+
+                // Interleave to form 64-bit (high << 32) | low pairs
+                // UnpackLow/High operate on 128-bit lanes (4 lanes in 512-bit)
+                var interleaved02 = Avx512F.UnpackLow(low, high);   // results 0,1 | 4,5 | 8,9 | 12,13
+                var interleaved13 = Avx512F.UnpackHigh(low, high);  // results 2,3 | 6,7 | 10,11 | 14,15
+
+                // Shift right by (32 - rot) to get barrel shift result
+                var shifted02 = Avx512F.ShiftRightLogical(interleaved02.AsUInt64(), (byte)rightShift);
+                var shifted13 = Avx512F.ShiftRightLogical(interleaved13.AsUInt64(), (byte)rightShift);
+
+                // Extract lower 32 bits of each 64-bit value using shuffle (per 128-bit lane)
+                var s02 = Avx512F.Shuffle(shifted02.AsInt32(), 0b00_00_10_00);  // [r0,r1,*,*] per lane
+                var s13 = Avx512F.Shuffle(shifted13.AsInt32(), 0b10_00_00_00);  // [*,*,r2,r3] per lane
+
+                // Blend to get final order - mask 0b1100110011001100 picks positions 2,3,6,7,10,11,14,15 from s13
+                var blendMask = Vector512.Create(0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u);
+                var blended = Vector512.ConditionalSelect(blendMask, s13.AsUInt32(), s02.AsUInt32());
+
+                // Store to [dstWord-15, dstWord-14, ..., dstWord]
+                blended.StoreUnsafe(ref buffer[dstWord - 15]);
+
+                // Update for next iteration
+                highBitsLoop = buffer[srcBase - 16];
+                dstWord -= 16;
+            }
+        }
 
         // AVX2 path: process 8 words at a time
         if (Avx2.IsSupported && dstWord - 7 >= dstStartWord)
