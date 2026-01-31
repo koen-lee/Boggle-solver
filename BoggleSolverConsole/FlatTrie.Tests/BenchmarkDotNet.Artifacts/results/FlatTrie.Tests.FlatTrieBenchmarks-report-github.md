@@ -4,20 +4,20 @@ BenchmarkDotNet v0.13.12, Windows 11 (10.0.26200.7623)
 Unknown processor
 .NET SDK 10.0.102
   [Host]     : .NET 8.0.23 (8.0.2325.60607), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
-  Job-WRHQAW : .NET 8.0.23 (8.0.2325.60607), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
+  Job-LBEHLE : .NET 8.0.23 (8.0.2325.60607), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
 
 IterationCount=10  WarmupCount=3  
 
 ```
-| Method                       | Mean        | Error     | StdDev    | Gen0    | Gen1    | Gen2    | Allocated |
-|----------------------------- |------------:|----------:|----------:|--------:|--------:|--------:|----------:|
-| RandomOrderWrites            | 1,316.16 μs | 39.243 μs | 25.957 μs |  3.9063 |       - |       - |   32817 B |
-| RandomOrderWrites_Dictionary |    62.81 μs |  4.756 μs |  3.146 μs | 30.2734 | 30.2734 | 30.2734 |  215650 B |
-| SequentialWrites             |   843.04 μs | 32.087 μs | 21.224 μs |  3.9063 |       - |       - |   32816 B |
-| GuidWrites                   |   855.59 μs | 20.289 μs | 13.420 μs |  3.9063 |       - |       - |   32816 B |
-| FileWrites                   |   520.14 μs |  9.905 μs |  5.895 μs |  3.9063 |       - |       - |   32816 B |
-| ReadAllKeys                  |   395.93 μs |  8.512 μs |  5.630 μs |       - |       - |       - |         - |
-| ReadAllKeys_Dictionary       |    23.63 μs |  0.774 μs |  0.512 μs |       - |       - |       - |         - |
-| ReadAllGuidKeys              |   148.32 μs |  3.446 μs |  2.279 μs |       - |       - |       - |         - |
-| ReadAllFileKeys              |   341.19 μs |  7.458 μs |  4.933 μs |       - |       - |       - |         - |
-| OverflowScenario             | 1,465.83 μs | 51.955 μs | 30.917 μs | 29.2969 | 29.2969 | 29.2969 |  334442 B |
+| Method                       | Mean        | Error      | StdDev    | Gen0     | Gen1     | Gen2    | Allocated |
+|----------------------------- |------------:|-----------:|----------:|---------:|---------:|--------:|----------:|
+| RandomOrderWrites            | 1,319.86 μs |  50.005 μs | 29.757 μs |   3.9063 |        - |       - |   32817 B |
+| RandomOrderWrites_Dictionary |    61.45 μs |   2.356 μs |  1.558 μs | 136.6577 | 136.6577 | 26.9165 |  215649 B |
+| SequentialWrites             |   832.60 μs |  21.512 μs | 14.229 μs |   3.9063 |        - |       - |   32816 B |
+| GuidWrites                   |   887.83 μs |  22.615 μs | 13.458 μs |   3.9063 |        - |       - |   32816 B |
+| FileWrites                   |   540.43 μs |  30.949 μs | 20.471 μs |   3.9063 |        - |       - |   32816 B |
+| ReadAllKeys                  |   393.71 μs |   5.410 μs |  3.220 μs |        - |        - |       - |         - |
+| ReadAllKeys_Dictionary       |    24.06 μs |   1.139 μs |  0.753 μs |        - |        - |       - |         - |
+| ReadAllGuidKeys              |   150.46 μs |   9.599 μs |  6.349 μs |        - |        - |       - |         - |
+| ReadAllFileKeys              |   337.64 μs |   5.468 μs |  2.860 μs |        - |        - |       - |         - |
+| OverflowScenario             | 1,444.50 μs | 103.278 μs | 68.312 μs | 142.5781 | 142.5781 | 25.3906 |  334438 B |

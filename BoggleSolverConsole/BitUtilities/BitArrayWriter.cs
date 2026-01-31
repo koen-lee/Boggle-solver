@@ -422,7 +422,7 @@ public ref struct BitArrayWriter
     /// </summary>
     public static void ShiftBitsRightSimd(Span<uint> buffer, int fromBitPos, int bitsToMove, int delta)
     {
-        #pragma warning disable CA1857 // Shift operand can't be a constant here 
+#pragma warning disable CA1857 // Shift operand can't be a constant here 
         if (bitsToMove <= 0 || delta <= 0)
             return;
 
@@ -449,6 +449,7 @@ public ref struct BitArrayWriter
         // AVX-512 path: process 16 words at a time
         if (Avx512F.IsSupported && dstWord - 15 >= dstStartWord)
         {
+            var blendMask = Vector512.Create(0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u);
             while (dstWord - 15 >= dstStartWord)
             {
                 int srcBase = dstWord - wordShift;
@@ -472,12 +473,11 @@ public ref struct BitArrayWriter
                 var shifted13 = Avx512F.ShiftRightLogical(interleaved13.AsUInt64(), (byte)rightShift);
 
                 // Extract lower 32 bits of each 64-bit value using shuffle (per 128-bit lane)
-                var s02 = Avx512F.Shuffle(shifted02.AsInt32(), 0b00_00_10_00);  // [r0,r1,*,*] per lane
-                var s13 = Avx512F.Shuffle(shifted13.AsInt32(), 0b10_00_00_00);  // [*,*,r2,r3] per lane
+                var s02 = Avx512F.Shuffle(shifted02.AsUInt32(), 0b00_00_10_00);  // [r0,r1,*,*] per lane
+                var s13 = Avx512F.Shuffle(shifted13.AsUInt32(), 0b10_00_00_00);  // [*,*,r2,r3] per lane
 
                 // Blend to get final order - mask 0b1100110011001100 picks positions 2,3,6,7,10,11,14,15 from s13
-                var blendMask = Vector512.Create(0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u);
-                var blended = Vector512.ConditionalSelect(blendMask, s13.AsUInt32(), s02.AsUInt32());
+                var blended = Vector512.ConditionalSelect(blendMask, s13, s02);
 
                 // Store to [dstWord-15, dstWord-14, ..., dstWord]
                 blended.StoreUnsafe(ref buffer[dstWord - 15]);
@@ -491,6 +491,7 @@ public ref struct BitArrayWriter
         // AVX2 path: process 8 words at a time
         if (Avx2.IsSupported && dstWord - 7 >= dstStartWord)
         {
+            var blendMask = Vector256.Create(0u, 0u, ~0u, ~0u, 0u, 0u, ~0u, ~0u);
             while (dstWord - 7 >= dstStartWord)
             {
                 int srcBase = dstWord - wordShift;
@@ -517,13 +518,11 @@ public ref struct BitArrayWriter
                 var shifted13 = Avx2.ShiftRightLogical(interleaved13.AsUInt64(), (byte)rightShift);
 
                 // Extract lower 32 bits of each 64-bit value using shuffle
-                // s02 needs r0,r1 at positions 0,1 (for blend mask 0b11001100)
-                // s13 needs r2,r3 at positions 2,3 (for blend mask 0b11001100)
-                var s02 = Avx2.Shuffle(shifted02.AsInt32(), 0b00_00_10_00);  // [r0,r1,*,* | r4,r5,*,*]
-                var s13 = Avx2.Shuffle(shifted13.AsInt32(), 0b10_00_00_00);  // [*,*,r2,r3 | *,*,r6,r7]
+                var s02 = Avx2.Shuffle(shifted02.AsUInt32(), 0b00_00_10_00);  // [r0,r1,*,* | r4,r5,*,*]
+                var s13 = Avx2.Shuffle(shifted13.AsUInt32(), 0b10_00_00_00);  // [*,*,r2,r3 | *,*,r6,r7]
 
                 // Blend to get final order [r0,r1,r2,r3,r4,r5,r6,r7]
-                var blended = Avx.Blend(s02.AsSingle(), s13.AsSingle(), 0b11001100).AsUInt32();
+                var blended = Vector256.ConditionalSelect(blendMask, s13, s02);
 
                 // Store to [dstWord-7, dstWord-6, ..., dstWord]
                 blended.StoreUnsafe(ref buffer[dstWord - 7]);
@@ -566,11 +565,11 @@ public ref struct BitArrayWriter
 
                 // Extract lower 32 bits of each 64-bit value
                 // Shuffle to get [result0, result1, ?, ?] and [result2, result3, ?, ?]
-                var s01 = Sse2.Shuffle(shifted01.AsInt32(), 0b00_00_10_00);
-                var s23 = Sse2.Shuffle(shifted23.AsInt32(), 0b00_00_10_00);
+                var s01 = Sse2.Shuffle(shifted01.AsUInt32(), 0b00_00_10_00).AsUInt64();
+                var s23 = Sse2.Shuffle(shifted23.AsUInt32(), 0b00_00_10_00).AsUInt64();
 
-                // Combine low halves: [result0, result1, result2, result3]
-                var result = Sse.MoveLowToHigh(s01.AsSingle(), s23.AsSingle()).AsUInt32();
+                // Combine low 64-bit halves: [r0,r1] and [r2,r3] -> [r0,r1,r2,r3]
+                var result = Sse2.UnpackLow(s01, s23).AsUInt32();
 
                 // Store to [dstWord-3, dstWord-2, dstWord-1, dstWord]
                 result.StoreUnsafe(ref buffer[dstWord - 3]);
@@ -608,7 +607,7 @@ public ref struct BitArrayWriter
     }
 
 
-        /// <summary>
+    /// <summary>
     /// SIMD-optimized shift right for large multi-word shifts.
     /// Uses SSE2 to process 4 destination words at a time.
     /// Call this instead of ShiftBitsRight when bitsToMove is large (e.g., >= 256 bits / 8 words).
