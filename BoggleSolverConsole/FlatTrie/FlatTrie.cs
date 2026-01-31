@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using BitUtilities;
 
@@ -91,18 +92,8 @@ public class FlatTrie : ITrie
     /// </summary>
     private static ReadOnlyBitString EncodeKey(string key, int byteCount, Span<uint> keyBuffer)
     {
-        Span<byte> utf8Bytes = stackalloc byte[byteCount];
+        Span<byte> utf8Bytes = MemoryMarshal.AsBytes(keyBuffer);
         Encoding.UTF8.GetBytes(key, utf8Bytes);
-
-        // Pack bytes into uints (4 bytes per uint, LSB-first)
-        keyBuffer.Clear();
-        for (int i = 0; i < byteCount; i++)
-        {
-            int uintIndex = i / 4;
-            int byteInUint = i % 4;
-            keyBuffer[uintIndex] |= (uint)utf8Bytes[i] << (byteInUint * 8);
-        }
-
         return ReadOnlyBitString.Wrap(keyBuffer, byteCount * 8);
     }
 
