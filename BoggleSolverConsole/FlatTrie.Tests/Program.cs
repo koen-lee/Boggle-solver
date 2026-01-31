@@ -11,12 +11,6 @@ public class Program
             var benchmarkArg = args.Length > 1 ? args[1] : "trie";
             switch (benchmarkArg.ToLower())
             {
-                case "shift":
-                    BenchmarkRunner.Run<ShiftBitsRightBenchmarks>();
-                    break;
-                case "threshold":
-                    BenchmarkRunner.Run<ThresholdBenchmarks>();
-                    break;
                 case "trie":
                 default:
                     BenchmarkRunner.Run<FlatTrieBenchmarks>();
