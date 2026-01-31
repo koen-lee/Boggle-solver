@@ -129,6 +129,8 @@ public class FlatTrie : ITrie
 
         int byteCount = Encoding.UTF8.GetByteCount(key);
         int uintCount = (byteCount + 3) / 4;
+        if (uintCount > BufferSizeUints)
+            return false; // Key too large to fit in trie, also prevents stack overflow in stackalloc
         Span<uint> keyBuffer = stackalloc uint[uintCount];
         var keyBits = EncodeKey(key, byteCount, keyBuffer);
 
@@ -246,6 +248,8 @@ public class FlatTrie : ITrie
 
         int byteCount = Encoding.UTF8.GetByteCount(key);
         int uintCount = (byteCount + 3) / 4;
+        if (uintCount > BufferSizeUints)
+            return false; // Key too large to fit in trie, also prevents stack overflow in stackalloc
         Span<uint> keyBuffer = stackalloc uint[uintCount];
         var keyBits = EncodeKey(key, byteCount, keyBuffer);
 
@@ -702,9 +706,10 @@ public class FlatTrie : ITrie
     {
         if (string.IsNullOrEmpty(key))
             return;
-
         int byteCount = Encoding.UTF8.GetByteCount(key);
         int uintCount = (byteCount + 3) / 4;
+        if (uintCount > BufferSizeUints)
+            return; // Key too large to fit in trie, also prevents stack overflow in stackalloc
         Span<uint> keyBuffer = stackalloc uint[uintCount];
         var keyBits = EncodeKey(key, byteCount, keyBuffer);
 
