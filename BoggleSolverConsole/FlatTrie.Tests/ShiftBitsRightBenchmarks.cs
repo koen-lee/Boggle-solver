@@ -27,7 +27,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_64bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 64, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 64, 47);
         return _buffer[0];
     }
 
@@ -43,7 +43,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_128bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 128, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 128, 47);
         return _buffer[0];
     }
 
@@ -59,7 +59,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_192bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 192, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 192, 47);
         return _buffer[0];
     }
 
@@ -75,7 +75,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_256bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 256, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 256, 47);
         return _buffer[0];
     }
 
@@ -91,7 +91,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_384bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 384, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 384, 47);
         return _buffer[0];
     }
 
@@ -107,7 +107,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_512bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 512, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 512, 47);
         return _buffer[0];
     }
 
@@ -123,7 +123,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_1024bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 1024, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 1024, 47);
         return _buffer[0];
     }
 
@@ -139,7 +139,7 @@ public class ShiftBitsRightBenchmarks
     public uint Scalar_2048bits()
     {
         for (int i = 0; i < BatchSize; i++)
-            BitArrayWriter.ShiftBitsRight(_buffer, 50, 2048, 47);
+            BitArrayWriter.ShiftBitsRight_old(_buffer, 50, 2048, 47);
         return _buffer[0];
     }
 
