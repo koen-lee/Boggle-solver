@@ -58,7 +58,7 @@ public readonly struct Fixed
         if (bits >= 32) throw new NotImplementedException("Shifting by more than 32 bits is not implemented.");
 
         var fraction = new uint[Size];
-        var carry = (uint)Math.Abs(_integer) << (32 - bits);
+        var carry = (uint)_integer << (32 - bits);
         for (var i = 0; i < Size; i++)
         {
             var current = _fraction[i];
