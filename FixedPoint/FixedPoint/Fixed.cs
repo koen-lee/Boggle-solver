@@ -3,7 +3,7 @@
 namespace FixedPoint;
 
 [DebuggerDisplay($"{{{nameof(GetDebuggerDisplay)}(),nq}}")]
-public readonly struct Fixed
+public readonly struct Fixed: IComparable<Fixed>, IEquatable<Fixed>
 {
     const int Size = 4; // Number of uints in the fraction part
 
@@ -16,6 +16,59 @@ public readonly struct Fixed
     {
         _integer = value;
         _fraction = new uint[Size];
+    }
+
+    /// <summary>
+    /// Converts a double to an exact Fixed-point representation using the double's mantissa bits.
+    /// Throws for NaN and infinity.
+    /// </summary>
+    public Fixed(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            throw new ArgumentOutOfRangeException(nameof(value));
+
+        var bits = BitConverter.DoubleToInt64Bits(value);
+        var negative = (bits >> 63) != 0;
+        var exponentBits = (int)((bits >> 52) & 0x7FF);
+        var mantissa = bits & 0x000FFFFFFFFFFFFFL;
+
+        if (exponentBits == 0 && mantissa == 0)
+        {
+            _integer = 0;
+            _fraction = new uint[Size];
+            return;
+        }
+
+        // Normal: implicit leading 1. Subnormal: no leading 1, exponent treated as -1022.
+        var M = exponentBits == 0 ? mantissa : mantissa | (1L << 52);
+        var shift = exponentBits == 0 ? -1074 : exponentBits - 1075; // exponent - 1023 - 52
+
+        // Place M: integer = M>>32, fraction[0] = M & 0xFFFFFFFF → represents M * 2^-32.
+        // Then shift by (shift + 32) to reach M * 2^shift.
+        var frac = new uint[Size];
+        frac[0] = (uint)(M & 0xFFFFFFFF);
+        var temp = new Fixed((int)(M >> 32), frac);
+
+        var totalShift = shift + 32;
+        var result = totalShift >= 0 ? temp.ShiftLeft(totalShift) : temp.ShiftRight(-totalShift);
+        if (negative) result = result.Negate();
+
+        _integer = result._integer;
+        _fraction = result._fraction;
+    }
+
+    public static explicit operator Fixed(double value) => new(value);
+
+    public static explicit operator double(Fixed value)
+    {
+        var result = (double)value._integer;
+        var scale = 1.0 / 4294967296.0; // 2^-32
+        for (var i = 0; i < Size; i++)
+        {
+            result += value._fraction[i] * scale;
+            scale /= 4294967296.0;
+        }
+        return result;
     }
 
     private Fixed(int integer, uint[] fraction)
@@ -206,5 +259,24 @@ public readonly struct Fixed
         if (_integer < 0)
             return "-" + Negate().ToHexString();
         return ToHexString();
+    }
+
+    public int CompareTo(Fixed other)
+    {
+        var intComparison = _integer.CompareTo(other._integer);
+        if (intComparison != 0)
+            return intComparison;
+        for (var i = 0; i < Size; i++)
+        {
+            var fracComparison = _fraction[i].CompareTo(other._fraction[i]);
+            if (fracComparison != 0)
+                return fracComparison;
+        }
+        return 0;
+    }
+
+    public bool Equals(Fixed other)
+    {
+        return CompareTo(other) == 0;
     }
 }
