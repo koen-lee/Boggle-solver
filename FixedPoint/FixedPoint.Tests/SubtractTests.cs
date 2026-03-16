@@ -29,4 +29,13 @@ public sealed class SubtractTests
         // 2 - 3 = -1 in two's complement
         Assert.AreEqual("FFFFFFFF.00000000000000000000000000000000", new Fixed(2).Subtract(new Fixed(3)).ToHexString());
     }
+
+    [TestMethod]
+    public void Subtract_FractionNoBorrowFromInteger()
+    {
+        // (2 * 2^-32) - (1 * 2^-32) = 1 * 2^-32, no borrow into the integer word.
+        var a = Fixed.ParseHexStringExact("0.00000002000000000000000000000000");
+        var b = Fixed.ParseHexStringExact("0.00000001000000000000000000000000");
+        Assert.AreEqual("0.00000001000000000000000000000000", a.Subtract(b).ToHexString());
+    }
 }

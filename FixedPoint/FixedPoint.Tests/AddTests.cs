@@ -43,4 +43,13 @@ public sealed class AddTests
         var b = new Fixed(3);
         Assert.AreEqual(a.ToHexString(), a.Add(b).Subtract(b).ToHexString());
     }
+
+    [TestMethod]
+    public void Add_FractionCarryPropagatesIntoInteger()
+    {
+        // 0xFFFFFFFF * 2^-32 + 0x00000001 * 2^-32 = 1.0 exactly.
+        var a = Fixed.ParseHexStringExact("0.FFFFFFFF000000000000000000000000");
+        var b = Fixed.ParseHexStringExact("0.00000001000000000000000000000000");
+        Assert.AreEqual("1.00000000000000000000000000000000", a.Add(b).ToHexString());
+    }
 }
