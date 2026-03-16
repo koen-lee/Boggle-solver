@@ -6,31 +6,42 @@ public sealed class ConstructorTests
     [TestMethod]
     public void Zero_HasZeroIntegerAndFraction()
     {
-        Assert.AreEqual($"0.{Helpers.ZeroFraction}", Fixed.Zero.ToString());
+        Assert.AreEqual("0.00000000000000000000000000000000", Fixed.Zero.ToHexString());
     }
 
     [TestMethod]
     public void Constructor_PositiveInteger_SetsIntegerPart()
     {
-        Assert.AreEqual($"5.{Helpers.ZeroFraction}", new Fixed(5).ToString());
+        Assert.AreEqual("5.00000000000000000000000000000000", new Fixed(5).ToHexString());
     }
 
     [TestMethod]
     public void Constructor_NegativeInteger_ShowsTwosComplement()
     {
-        // -1 in hex two's complement is FFFFFFFF
-        Assert.AreEqual($"FFFFFFFF.{Helpers.ZeroFraction}", new Fixed(-1).ToString());
+        Assert.AreEqual("FFFFFFFF.00000000000000000000000000000000", new Fixed(-1).ToHexString());
     }
 
     [TestMethod]
     public void Constructor_Zero_MatchesZeroConstant()
     {
-        Assert.AreEqual(Fixed.Zero.ToString(), new Fixed(0).ToString());
+        Assert.AreEqual(Fixed.Zero.ToHexString(), new Fixed(0).ToHexString());
     }
 
     [TestMethod]
-    public void ToString_LargePositiveInteger_FormatsAsHex()
+    public void ToHexString_LargePositiveInteger_FormatsAsHex()
     {
-        Assert.AreEqual($"10.{Helpers.ZeroFraction}", new Fixed(16).ToString());
+        Assert.AreEqual("10.00000000000000000000000000000000", new Fixed(16).ToHexString());
+    }
+
+    [TestMethod]
+    public void ParseHexStringExact_RoundtripsWithToHexString()
+    {
+        Assert.AreEqual(new Fixed(42).ToHexString(), Fixed.ParseHexStringExact("2A.00000000000000000000000000000000").ToHexString());
+    }
+
+    [TestMethod]
+    public void ParseHexStringExact_RoundtripsNegativeInteger()
+    {
+        Assert.AreEqual(new Fixed(-1).ToHexString(), Fixed.ParseHexStringExact("FFFFFFFF.00000000000000000000000000000000").ToHexString());
     }
 }
