@@ -62,11 +62,12 @@ public readonly struct Fixed: IComparable<Fixed>, IEquatable<Fixed>
     public static explicit operator double(Fixed value)
     {
         var result = (double)value._integer;
-        var scale = 1.0 / 4294967296.0; // 2^-32
+        const long scale = 1L << 32; // 2^32
+        var factor = 1.0 / scale;
         for (var i = 0; i < Size; i++)
         {
-            result += value._fraction[i] * scale;
-            scale /= 4294967296.0;
+            result += value._fraction[i] * factor;
+            factor /= scale;
         }
         return result;
     }
