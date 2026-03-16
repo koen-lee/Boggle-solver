@@ -55,18 +55,55 @@ public readonly struct Fixed
     public Fixed ShiftRight(int bits)
     {
         if (bits <= 0) return this;
-        if (bits >= 32) throw new NotImplementedException("Shifting by more than 32 bits is not implemented.");
 
-        var fraction = new uint[Size];
-        var carry = (uint)_integer << (32 - bits);
+        var wholeElements = bits / 32;
+        var remainder = bits % 32;
+
+        // Step 1: shift by whole 32-bit elements.
+        // The integer sign-extends; its raw bits slide into fraction[wholeElements-1];
+        // sign bits fill any gap above that; old fraction elements slide down.
+        int integer;
+        uint[] fraction;
+
+        if (wholeElements == 0)
+        {
+            integer = _integer;
+            fraction = _fraction;
+        }
+        else
+        {
+            integer = _integer >> 31; // 0 or -1
+            fraction = new uint[Size];
+            var intSign = (uint)integer;
+
+            if (wholeElements <= Size)
+            {
+                for (var i = 0; i < wholeElements - 1; i++)
+                    fraction[i] = intSign;
+                fraction[wholeElements - 1] = (uint)_integer;
+                for (var i = wholeElements; i < Size; i++)
+                    fraction[i] = _fraction[i - wholeElements];
+            }
+            else
+            {
+                // All original bits shifted out; only sign remains.
+                Array.Fill(fraction, intSign);
+            }
+        }
+
+        if (remainder == 0)
+            return new Fixed(integer, fraction);
+
+        // Step 2: shift the remainder bits using the existing sub-32 logic.
+        var resultFraction = new uint[Size];
+        var carry = (uint)integer << (32 - remainder);
         for (var i = 0; i < Size; i++)
         {
-            var current = _fraction[i];
-            fraction[i] = (current >> bits) | carry;
-            carry = (current << (32 - bits)) & 0xFFFFFFFF;
+            var current = fraction[i];
+            resultFraction[i] = (current >> remainder) | carry;
+            carry = current << (32 - remainder);
         }
-        var integer = _integer >> bits;
-        return new Fixed(integer, fraction);
+        return new Fixed(integer >> remainder, resultFraction);
     }
 
     private string GetDebuggerDisplay()

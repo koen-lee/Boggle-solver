@@ -11,18 +11,6 @@ public sealed class ShiftRightTests
     }
 
     [TestMethod]
-    public void ShiftRight_By32_ThrowsNotImplementedException()
-    {
-        Assert.ThrowsExactly<NotImplementedException>(() => new Fixed(1).ShiftRight(32));
-    }
-
-    [TestMethod]
-    public void ShiftRight_By33_ThrowsNotImplementedException()
-    {
-        Assert.ThrowsExactly<NotImplementedException>(() => new Fixed(1).ShiftRight(33));
-    }
-
-    [TestMethod]
     public void ShiftRight_EvenPositive_ByOne_HalvesExactly()
     {
         // 8 (LSB=0) >> 1 = 4.0, no fractional carry
@@ -109,10 +97,9 @@ public sealed class ShiftRightTests
     public void ShiftRight_NegativeEven_ByFour_FractionalCarry()
     {
         // shifting by 4 is easy in hex
-        // -4 (two's complement 0xFFFFFFFC) >> 4 = 0xFFFFFFFF.C 
+        // -4 (two's complement 0xFFFFFFFC) >> 4 = 0xFFFFFFFF.C
         var underTest = unchecked((int)0xFFFFFFFC);
         Assert.AreEqual(-4, underTest);
-
         var result = new Fixed(underTest).ShiftRight(4);
         // sign extended -v        v- msbs are shifted into fraction
         Assert.AreEqual($"FFFFFFFF.C{Helpers.ZeroFraction[..31]}", result.ToString());
@@ -130,5 +117,56 @@ public sealed class ShiftRightTests
     {
         // -1 >> 1: integer part stays -1 (sign extended)
         Assert.AreEqual(-1, Helpers.IntegerPart(new Fixed(-1).ShiftRight(1)));
+    }
+
+    // --- Shifts >= 32 bits (whole-element slide) ---
+
+    [TestMethod]
+    public void ShiftRight_By32_IntegerBitsLandInFraction0()
+    {
+        // 5 >> 32 = 5/2^32; integer becomes 0 (positive sign), fraction[0] = (uint)5
+        var result = new Fixed(5).ShiftRight(32);
+        Assert.AreEqual($"0.00000005{Helpers.ZeroFraction[..24]}", result.ToString());
+    }
+
+    [TestMethod]
+    public void ShiftRight_NegativeBy32_SignFillsGapAndIntegerMovesToFraction()
+    {
+        // -65536 (0xFFFF0000) >> 32: integer=-1, fraction[0]=0xFFFF0000, rest=0
+        var result = new Fixed(-0x10000).ShiftRight(32);
+        Assert.AreEqual($"FFFFFFFF.FFFF0000{Helpers.ZeroFraction[..24]}", result.ToString());
+    }
+
+    [TestMethod]
+    public void ShiftRight_By33_WholeElementThenRemainder()
+    {
+        // 5 >> 33 = 5/2^33
+        // After 32-bit slide: fraction[0]=5; remainder shift of 1 produces fraction[0]=2, fraction[1]=0x80000000
+        var result = new Fixed(5).ShiftRight(33);
+        Assert.AreEqual($"0.0000000280000000{Helpers.ZeroFraction[..16]}", result.ToString());
+    }
+
+    [TestMethod]
+    public void ShiftRight_By64_IntegerLandsAtFraction1WithSignFillAtFraction0()
+    {
+        // 1 >> 64: fraction[0]=0 (sign fill), fraction[1]=(uint)1, rest=0
+        var result = new Fixed(1).ShiftRight(64);
+        Assert.AreEqual($"0.{Helpers.ZeroFraction[..8]}00000001{Helpers.ZeroFraction[..16]}", result.ToString());
+    }
+
+    [TestMethod]
+    public void ShiftRight_LargePositive_AllBitsShiftedOut_ReturnsZero()
+    {
+        // Shifting a positive value further than the total precision (32+128=160 bits) → all zero
+        var result = new Fixed(1).ShiftRight(160);
+        Assert.AreEqual($"0.{Helpers.ZeroFraction}", result.ToString());
+    }
+
+    [TestMethod]
+    public void ShiftRight_LargeNegative_AllBitsShiftedOut_ReturnsNegativeEpsilon()
+    {
+        // Shifting -1 further than total precision → all bits are sign (all 1s)
+        var result = new Fixed(-1).ShiftRight(160);
+        Assert.AreEqual($"FFFFFFFF.FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", result.ToString());
     }
 }
