@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="FixedPoint.Tests/FixedPoint.Tests.csproj" />
+  <Project Path="FixedPoint/FixedPoint.csproj" />
+  <Project Path="FixedPointConsole/FixedPointConsole.csproj" />
+</Solution>
