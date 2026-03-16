@@ -279,4 +279,21 @@ public readonly struct Fixed: IComparable<Fixed>, IEquatable<Fixed>
     {
         return CompareTo(other) == 0;
     }
+
+    public override bool Equals(object? obj)
+    {
+        return obj is Fixed other && Equals(other);
+    }
+
+    public override int GetHashCode()
+    {
+        unchecked
+        {
+            int hash = 17;
+            hash = hash * 31 + _integer.GetHashCode();
+            foreach (var frac in _fraction)
+                hash = hash * 31 + frac.GetHashCode();
+            return hash;
+        }
+    }
 }
