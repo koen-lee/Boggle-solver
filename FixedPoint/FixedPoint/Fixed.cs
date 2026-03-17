@@ -129,7 +129,8 @@ public readonly partial struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
     /// </summary>
     public Fixed ShiftRight(int bits)
     {
-        if (bits <= 0) return this;
+        if (bits == 0) return this;
+        if (bits < 0) return ShiftLeft(-bits);
 
         var wholeWords = bits / 32;
         var remainder = bits % 32;
@@ -171,7 +172,8 @@ public readonly partial struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
     /// </summary>
     public Fixed ShiftLeft(int bits)
     {
-        if (bits <= 0) return this;
+        if (bits == 0) return this;
+        if (bits < 0) return ShiftRight(-bits);
 
         var wholeWords = bits / 32;
         var remainder = bits % 32;
