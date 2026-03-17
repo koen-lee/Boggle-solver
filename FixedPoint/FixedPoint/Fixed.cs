@@ -1,21 +1,17 @@
 ﻿using System.Diagnostics;
-using System.Numerics;
 
 namespace FixedPoint;
 
 [DebuggerDisplay($"{{{nameof(GetDebuggerDisplay)}(),nq}}")]
-public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
+public readonly partial struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
 {
     const int Size = 4; // Number of 32-bit fraction words
 
-    // Minimum decimal digits to uniquely represent any Size*32-bit fraction: ceil(Size*32 * log10(2)).
-    static readonly int DecimalFracDigits = (int)Math.Ceiling(Size * 32 * Math.Log10(2));
-
     // LSB-first storage:
-    //   _words[0]    = least significant fraction word  (old _fraction[Size-1])
-    //   _words[i]    = fraction word i from LSB         (old _fraction[Size-1-i])
-    //   _words[Size-1] = most significant fraction word (old _fraction[0])
-    //   _words[Size]   = integer part, signed            (old _integer)
+    //   _words[0]    = least significant fraction word  
+    //   _words[i]    = fraction word i from LSB         
+    //   _words[Size-1] = most significant fraction word
+    //   _words[Size]   = integer part, signed            
     private readonly uint[] _words;
 
     private int IntegerPart => (int)_words[Size];
@@ -56,7 +52,7 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         // Then shift by (shift + 32) to reach M * 2^shift.
         var tempWords = new uint[Size + 1];
         tempWords[Size - 1] = (uint)(M & 0xFFFFFFFF); // MSB fraction word
-        tempWords[Size]     = (uint)(M >> 32);         // integer part
+        tempWords[Size] = (uint)(M >> 32);         // integer part
         var temp = new Fixed(tempWords);
 
         var totalShift = shift + 32;
@@ -132,8 +128,8 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         if (bits <= 0) return this;
 
         var wholeWords = bits / 32;
-        var remainder  = bits % 32;
-        var signFill   = (uint)((int)_words[Size] >> 31); // 0x00000000 or 0xFFFFFFFF
+        var remainder = bits % 32;
+        var signFill = (uint)((int)_words[Size] >> 31); // 0x00000000 or 0xFFFFFFFF
 
         // Step 1: shift by whole words.
         uint[] words;
@@ -174,7 +170,7 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         if (bits <= 0) return this;
 
         var wholeWords = bits / 32;
-        var remainder  = bits % 32;
+        var remainder = bits % 32;
 
         // Step 1: shift by whole words.
         uint[] words;
@@ -204,7 +200,7 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
     }
 
     /// <summary>
-    /// Multiplies this value by a non-negative 32-bit scalar. O(N) — used for decimal digit extraction.
+    /// Multiplies this value by a non-negative 32-bit scalar. O(N).
     /// </summary>
     public Fixed MultiplyByUInt(uint factor)
     {
@@ -274,55 +270,6 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         return negative ? result.Negate() : result;
     }
 
-    public static Fixed ParseHexStringExact(string s)
-    {
-        var dot = s.IndexOf('.');
-        var fracStr = s[(dot + 1)..];
-        var words = new uint[Size + 1];
-        words[Size] = Convert.ToUInt32(s[..dot], 16);
-        for (var i = 0; i < Size; i++)
-            words[Size - 1 - i] = Convert.ToUInt32(fracStr.Substring(i * 8, 8), 16);
-        return new Fixed(words);
-    }
-
-    /// <summary>
-    /// Parses a decimal string produced by ToDecimalString(), exactly recovering the original Fixed value.
-    /// F* = floor(D × 2^128 / 10^39) where D is the 39-digit fractional integer.
-    /// BigInteger handles the exact arithmetic; no precision is lost.
-    /// </summary>
-    public static Fixed ParseDecimalExact(string s)
-    {
-        var span = s.AsSpan();
-        var negative = span[0] == '-';
-        if (negative) span = span[1..];
-
-        var dot = span.IndexOf('.');
-        var intPart = int.Parse(span[..dot]);
-
-        var fracSpan = span[(dot + 1)..];
-        if (fracSpan.Length != DecimalFracDigits)
-            throw new FormatException($"Expected exactly {DecimalFracDigits} fractional digits, got {fracSpan.Length}.");
-
-        // F* = ceiling(D × 2^128 / 10^DecimalFracDigits).
-        // ceiling is required because ToDecimalString uses floor: D = floor(F* × 10^DecimalFracDigits / 2^128).
-        // The inverse ceiling(D × 2^(Size*32) / 10^DecimalFracDigits) = F* exactly, because
-        // 10^DecimalFracDigits / 2^(Size*32) > 1 guarantees each F* maps to a unique D.
-        var scale = BigInteger.Pow(10, DecimalFracDigits);
-        var D = BigInteger.Parse(fracSpan);
-        var fracBits = (D * (BigInteger.One << 128) + scale - 1) / scale;
-
-        var words = new uint[Size + 1];
-        words[Size] = (uint)intPart;
-        for (var i = 0; i < Size; i++)
-        {
-            words[i] = (uint)(fracBits & 0xFFFFFFFF);
-            fracBits >>= 32;
-        }
-
-        var result = new Fixed(words);
-        return negative ? result.Negate() : result;
-    }
-
     private string GetDebuggerDisplay() => ToHexString();
 
     public string ToHexString()
@@ -333,51 +280,6 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         return $"{IntegerPart:X}.{fractionString}";
     }
 
-    /// <summary>
-    /// Returns the value as a decimal string with exactly DecimalFracDigits fractional digits (trailing zeros kept).
-    /// DecimalFracDigits = ceil(Size*32 * log10(2)) — the minimum to uniquely represent all fractions.
-    /// Batches of 9 digits are extracted by multiplying the fraction words by 10^9 at a time,
-    /// keeping each step to a single O(N) scalar multiply rather than a full O(N^2) Fixed multiply.
-    /// </summary>
-    public string ToDecimalString()
-    {
-        if (IntegerPart < 0)
-            return "-" + Negate().ToDecimalString();
-
-        const uint BatchBase = 1_000_000_000; // 10^9 < 2^30, so (uint)*BatchBase fits in ulong
-
-        // Work directly on the fraction words; the integer word does not participate.
-        var frac = new uint[Size];
-        for (var i = 0; i < Size; i++)
-            frac[i] = _words[i];
-
-        // 5 batches × 9 digits = 45; we keep the first 39.
-        var batchCount = (DecimalFracDigits + 8) / 9; // ceil(DecimalFracDigits / 9)
-        var fracChars = new char[batchCount * 9];
-        for (var g = 0; g < batchCount; g++)
-        {
-            ulong carry = 0;
-            for (var i = 0; i < Size; i++) // LSW → MSW
-            {
-                var val = (ulong)frac[i] * BatchBase + carry;
-                frac[i] = (uint)val;
-                carry = val >> 32;
-            }
-            // carry is 0..999_999_999 — the next 9 decimal digits
-            var batch = ((uint)carry).ToString("D9");
-            for (var k = 0; k < 9; k++)
-                fracChars[g * 9 + k] = batch[k];
-        }
-
-        return $"{IntegerPart}.{new string(fracChars, 0, DecimalFracDigits)}";
-    }
-
-    public override string ToString()
-    {
-        if (IntegerPart < 0)
-            return "-" + Negate().ToHexString();
-        return ToHexString();
-    }
 
     public int CompareTo(Fixed other)
     {
