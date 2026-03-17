@@ -36,38 +36,6 @@ public struct Size4 : IFixedSize
     }
 }
 
-/// <summary>7*32 = 224 bits of fractional precision. Uses Karatsuba (n=8, one split above schoolbook).</summary>
-public struct Size7 : IFixedSize
-{
-    public static int Value => 7;
-    public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
-        => Karatsuba.MultiplyHigh(a, b, result);
-}
-
-/// <summary>7*32 bits — same as Size7 but schoolbook. For correctness testing.</summary>
-public struct Size7Schoolbook : IFixedSize
-{
-    public static int Value => 7;
-    public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
-        => Karatsuba.SchoolbookMultiplyHigh(a, b, result);
-}
-
-/// <summary>15*32 = 480 bits of fractional precision. Uses Karatsuba (n=16, two splits above schoolbook).</summary>
-public struct Size15 : IFixedSize
-{
-    public static int Value => 15;
-    public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
-        => Karatsuba.MultiplyHigh(a, b, result);
-}
-
-/// <summary>15*32 bits — same as Size15 but schoolbook. For correctness testing.</summary>
-public struct Size15Schoolbook : IFixedSize
-{
-    public static int Value => 15;
-    public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
-        => Karatsuba.SchoolbookMultiplyHigh(a, b, result);
-}
-
 /// <summary>31*32 bits. Uses Karatsuba (n=32, three splits above schoolbook).</summary>
 public struct Size31 : IFixedSize
 {
@@ -79,21 +47,6 @@ public struct Size31 : IFixedSize
 public struct Size31Schoolbook : IFixedSize
 {
     public static int Value => 31;
-    public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
-        => Karatsuba.SchoolbookMultiplyHigh(a, b, result);
-}
-
-/// <summary>63*32 bits. Uses Karatsuba (n=64, four splits above schoolbook).</summary>
-public struct Size63 : IFixedSize
-{
-    public static int Value => 63;
-    public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
-        => Karatsuba.MultiplyHigh(a, b, result);
-}
-
-public struct Size63Schoolbook : IFixedSize
-{
-    public static int Value => 63;
     public static void Multiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
         => Karatsuba.SchoolbookMultiplyHigh(a, b, result);
 }

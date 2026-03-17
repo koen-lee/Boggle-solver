@@ -29,18 +29,6 @@ internal static class Karatsuba
         {
             ArrayPool<uint>.Shared.Return(buf);
         }
-
-        if (n == 32 && OnMismatch32 != null)
-        {
-            var sb = new uint[n];
-            SchoolbookMultiplyHigh(a, b, sb);
-            if (!result.SequenceEqual(sb))
-            {
-                var handler = OnMismatch32;
-                OnMismatch32 = null; // fire once
-                handler(a.ToArray(), b.ToArray(), result.ToArray(), sb);
-            }
-        }
     }
 
     /// <summary>
@@ -62,10 +50,6 @@ internal static class Karatsuba
             ArrayPool<uint>.Shared.Return(buf);
         }
     }
-
-    /// When non-null, called the first time a MultiplyHigh(n=32) result disagrees with schoolbook.
-    /// Receives (a, b, karatsuba_result, schoolbook_result), all length 32.
-    public static Action<uint[], uint[], uint[], uint[]>? OnMismatch32;
 
     /// <summary>
     /// Writes the full 2n-word product of a·b into out2n.
@@ -113,9 +97,11 @@ internal static class Karatsuba
 
             // Carry corrections: true mid_a = midA + ca*2^(half*32), similarly mid_b.
             // z1_true = midA*midB + ca*(midB<<half) + cb*(midA<<half) + ca*cb*(1<<n)
-            // The ca*cb*(1<<n) term falls outside the 2n-word window; ignore it.
+            // The ca*cb term lands at z1[n] → out2n[half+n] = out2n[3n/2], which is within
+            // the result window and must be added explicitly.
             if (ca != 0) AddShifted(z1, midB, half);
             if (cb != 0) AddShifted(z1, midA, half);
+            if (ca != 0 && cb != 0) z1[n]++; // ca*cb * 2^(n*32) term
 
             // z1 = z1_prod - z0 - z2  (Karatsuba identity guarantees z1 >= 0)
             SubtractSpans(z1, z0);
