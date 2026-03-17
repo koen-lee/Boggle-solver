@@ -200,8 +200,10 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
     }
 
     /// <summary>
-    /// Multiplies two Fixed values. Computes the full 320-bit product of the two 160-bit
-    /// sign-magnitude representations, then takes the middle 160 bits (shift right by 128).
+    /// Multiplies two Fixed values using a diagonal sweep over the N×N partial-product grid.
+    /// Iterates diagonals d = i+j from 0 to 2*Size. Diagonals below Size are outside the
+    /// result window but their carry propagates upward. Diagonals Size..2*Size produce the
+    /// N result words. UInt128 accumulates up to N products per diagonal without overflow.
     /// </summary>
     public Fixed Multiply(Fixed other)
     {
@@ -209,36 +211,18 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         var a = IntegerPart < 0 ? Negate() : this;
         var b = other.IntegerPart < 0 ? other.Negate() : other;
 
-        // a._words and b._words are already LSB-first — no copy or reversal needed.
         const int N = Size + 1;
-
-        // Schoolbook multiplication into a 2N-word product array, one row at a time.
-        // Invariant: product[k] < 2^32 before each (i,j) step, so the sum fits in ulong:
-        //   max sum = (2^32-1) + (2^32-1)^2 + carry_max(2^32-1) = 2^64 - 1 = ulong.MaxValue.
-        var product = new ulong[2 * N];
-        for (var i = 0; i < N; i++)
-        {
-            ulong carry = 0;
-            for (var j = 0; j < N; j++)
-            {
-                var sum = product[i + j] + (ulong)a._words[i] * b._words[j] + carry;
-                product[i + j] = sum & 0xFFFFFFFF;
-                carry = sum >> 32;
-            }
-            var k = i + N;
-            while (carry > 0)
-            {
-                var sum = product[k] + carry;
-                product[k++] = sum & 0xFFFFFFFF;
-                carry = sum >> 32;
-            }
-        }
-
-        // The fixed-point product a*b = (a_scaled * b_scaled) >> 128 (i.e., >> Size words).
-        // Result words (LSB first) are at product[Size .. Size+N-1].
         var words = new uint[N];
-        for (var i = 0; i <= Size; i++)
-            words[i] = (uint)product[Size + i];
+        UInt128 carry = 0;
+        for (var d = 0; d <= 2 * Size; d++)
+        {
+            UInt128 sum = carry;
+            for (var i = Math.Max(0, d - Size); i <= Math.Min(d, Size); i++)
+                sum += (ulong)a._words[i] * b._words[d - i];
+            if (d >= Size)
+                words[d - Size] = (uint)sum;
+            carry = sum >> 32;
+        }
 
         var result = new Fixed(words);
         return negative ? result.Negate() : result;
