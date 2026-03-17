@@ -1,14 +1,14 @@
 namespace FixedPoint;
 
-public readonly partial struct Fixed
+public readonly partial struct Fixed<TSize> where TSize : struct, IFixedSize
 {
-    private static readonly Fixed One = new Fixed(1);
+    private static readonly Fixed<TSize> One = new Fixed<TSize>(1);
 
     /// <summary>
     /// Returns sqrt(a) using Heron's method: x = (x + a * x.Reciprocal()) >> 1.
     /// Seeds from the double sqrt (~53 bits); ReciprocalIterations steps reach full precision.
     /// </summary>
-    public Fixed Sqrt()
+    public Fixed<TSize> Sqrt()
     {
         var cmp = CompareTo(Zero);
         if (cmp < 0)
@@ -16,7 +16,7 @@ public readonly partial struct Fixed
         if (cmp == 0)
             return Zero;
 
-        var x = (Fixed)Math.Sqrt((double)this);
+        var x = (Fixed<TSize>)Math.Sqrt((double)this);
         for (var i = 0; i < ReciprocalIterations; i++)
             x = (x + this * x.Reciprocal()) >> 1;
 
@@ -27,9 +27,9 @@ public readonly partial struct Fixed
     /// Returns an approximation of π, computed using the Gauss-Legendre algorithm.
     /// </summary>
     /// <returns></returns>
-    public static Fixed GetPi()
+    public static Fixed<TSize> GetPi()
     {
-        var x1 = new Fixed(2).Sqrt();
+        var x1 = new Fixed<TSize>(2).Sqrt();
         var x2 = One;
         var S = Zero;
         var c = One;
