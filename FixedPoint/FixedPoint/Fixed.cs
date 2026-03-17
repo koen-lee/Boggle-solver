@@ -200,6 +200,22 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
     }
 
     /// <summary>
+    /// Multiplies this value by a non-negative 32-bit scalar. O(N) — used for decimal digit extraction.
+    /// </summary>
+    public Fixed MultiplyByUInt(uint factor)
+    {
+        var words = new uint[Size + 1];
+        ulong carry = 0;
+        for (var i = 0; i <= Size; i++)
+        {
+            var val = (ulong)_words[i] * factor + carry;
+            words[i] = (uint)val;
+            carry = val >> 32;
+        }
+        return new Fixed(words);
+    }
+
+    /// <summary>
     /// Multiplies two Fixed values using a diagonal sweep over the N×N partial-product grid.
     /// Iterates diagonals d = i+j from 0 to 2*Size. Diagonals below Size are outside the
     /// result window but their carry propagates upward. Diagonals Size..2*Size produce the
@@ -273,6 +289,45 @@ public readonly struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
         var fractionString = string.Join("",
             Enumerable.Range(0, Size).Select(i => w[Size - 1 - i].ToString("X8")));
         return $"{IntegerPart:X}.{fractionString}";
+    }
+
+    /// <summary>
+    /// Returns the value as a decimal string with exactly 39 fractional digits (trailing zeros kept).
+    /// 39 = ceil(128 * log10(2)) — the minimum to uniquely represent all 128-bit fractions.
+    /// Batches of 9 digits are extracted by multiplying the fraction words by 10^9 at a time,
+    /// keeping each step to a single O(N) scalar multiply rather than a full O(N^2) Fixed multiply.
+    /// </summary>
+    public string ToDecimalString()
+    {
+        if (IntegerPart < 0)
+            return "-" + Negate().ToDecimalString();
+
+        const int FracDigits = 39;
+        const uint BatchBase = 1_000_000_000; // 10^9 < 2^30, so (uint)*BatchBase fits in ulong
+
+        // Work directly on the fraction words; the integer word does not participate.
+        var frac = new uint[Size];
+        for (var i = 0; i < Size; i++)
+            frac[i] = _words[i];
+
+        // 5 batches × 9 digits = 45; we keep the first 39.
+        var fracChars = new char[45];
+        for (var g = 0; g < 5; g++)
+        {
+            ulong carry = 0;
+            for (var i = 0; i < Size; i++) // LSW → MSW
+            {
+                var val = (ulong)frac[i] * BatchBase + carry;
+                frac[i] = (uint)val;
+                carry = val >> 32;
+            }
+            // carry is 0..999_999_999 — the next 9 decimal digits
+            var batch = ((uint)carry).ToString("D9");
+            for (var k = 0; k < 9; k++)
+                fracChars[g * 9 + k] = batch[k];
+        }
+
+        return $"{IntegerPart}.{new string(fracChars, 0, FracDigits)}";
     }
 
     public override string ToString()
