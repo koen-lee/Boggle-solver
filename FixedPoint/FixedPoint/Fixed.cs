@@ -7,6 +7,10 @@ public readonly partial struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
 {
     const int Size = 4; // Number of 32-bit fraction words
 
+    // Newton-Raphson iterations to reach Size*32 bits from a 53-bit double seed
+    // (each iteration doubles correct bits). +1 safety margin.
+    static readonly int ReciprocalIterations = (int)Math.Ceiling(Math.Log2(Size * 32.0 / 53)) + 1;
+
     // LSB-first storage:
     //   _words[0]    = least significant fraction word  
     //   _words[i]    = fraction word i from LSB         
@@ -245,29 +249,34 @@ public readonly partial struct Fixed : IComparable<Fixed>, IEquatable<Fixed>
     }
 
     /// <summary>
-    /// Divides this value by <paramref name="other"/> using Newton-Raphson reciprocal iteration.
-    /// Seeds the reciprocal estimate from a double, then refines with x = x*(2 - b*x) three times
-    /// (each iteration doubles correct bits; three iterations exceeds 160-bit precision).
+    /// Returns 1/this using Newton-Raphson iteration: x = x*(2 - this*x).
+    /// Seeds from a double reciprocal (~52 bits); three iterations yield 52*2^3 = 416 bits.
     /// </summary>
-    public Fixed Divide(Fixed other)
+    public Fixed Reciprocal()
     {
-        if (other.Equals(Zero))
+        if (Equals(Zero))
             throw new DivideByZeroException();
 
-        var negative = (IntegerPart < 0) != (other.IntegerPart < 0);
-        var a = IntegerPart < 0 ? Negate() : this;
-        var b = other.IntegerPart < 0 ? other.Negate() : other;
+        var negative = IntegerPart < 0;
+        var b = negative ? Negate() : this; // work with |this|
 
         // Seed: ~52 bits of precision from double reciprocal.
         var x = (Fixed)(1.0 / (double)b);
         var two = new Fixed(2);
 
-        // x = x * (2 - b*x): 3 iterations gives 52 * 2^3 = 416 bits — more than enough.
-        for (var i = 0; i < 3; i++)
-            x = x.Multiply(two.Subtract(b.Multiply(x)));
+        // x = x*(2 - b*x): each iteration doubles correct bits.
+        for (var i = 0; i < ReciprocalIterations; i++)
+            x *= two - b * x;
 
-        var result = a.Multiply(x);
-        return negative ? result.Negate() : result;
+        return negative ? x.Negate() : x;
+    }
+
+    /// <summary>Divides this value by <paramref name="other"/>.</summary>
+    public Fixed Divide(Fixed other)
+    {
+        if (other.Equals(Zero))
+            throw new DivideByZeroException();
+        return this * other.Reciprocal();
     }
 
     private string GetDebuggerDisplay() => ToHexString();
