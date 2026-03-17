@@ -7,6 +7,18 @@ public sealed class FixedTests
     /// Pi computed at Size255 (8160-bit fraction, ~2457 decimal digits) and Size1023 (32736-bit, ~9856 digits)
     /// must agree on all but the last 5 decimal digits of the lower-precision result.
     /// </summary>
+    /// <summary>
+    /// Karatsuba and schoolbook both compute the full 2n-word product then extract the same high words,
+    /// so every multiply result must be identical bit-for-bit. Any divergence indicates a Karatsuba bug.
+    /// </summary>
+    [TestMethod]
+    public void GetPi_KaratsubaMatchesSchoolbook_BitForBit()
+    {
+        var piKaratsuba  = Fixed<Size255>          .GetPi().ToHexString();
+        var piSchoolbook = Fixed<Size255Schoolbook>.GetPi().ToHexString();
+        Assert.AreEqual(piSchoolbook, piKaratsuba);
+    }
+
     [TestMethod]
     public void GetPi_Size255AndSize1023_AgreeExceptLastFiveDigits()
     {

@@ -34,7 +34,7 @@ public readonly partial struct Fixed<TSize> where TSize : struct, IFixedSize
         var S = Zero;
         var c = One;
         int k = 0;
-        while (c != Zero)
+        while (c.CompareTo(Zero) > 0)
         {
             S += c << k - 1;
             var aMean = (x1 + x2) >> 1;

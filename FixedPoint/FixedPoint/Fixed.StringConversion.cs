@@ -96,6 +96,43 @@ public readonly partial struct Fixed<TSize> where TSize : struct, IFixedSize
         return $"{IntegerPart}.{new string(fracChars, 0, DecimalFracDigits)}";
     }
 
+    public void WriteDecimalString(TextWriter writer)
+    {
+        if (IntegerPart < 0)
+        {
+            writer.Write('-');
+            Negate().WriteDecimalString(writer);
+            return;
+        }
+
+        const uint BatchBase = 1_000_000_000; // 10^9 < 2^30, so (uint)*BatchBase fits in ulong
+
+        // Work directly on the fraction words; the integer word does not participate.
+        var frac = new uint[TSize.Value];
+        for (var i = 0; i < TSize.Value; i++)
+            frac[i] = _words[i];
+
+        writer.Write(IntegerPart);
+        writer.Write('.');
+
+        // 5 batches × 9 digits = 45; we keep the first 39.
+        var batchCount = (DecimalFracDigits + 8) / 9; // ceil(DecimalFracDigits / 9)
+        for (var g = 0; g < batchCount; g++)
+        {
+            ulong carry = 0;
+            for (var i = 0; i < TSize.Value; i++) // LSW → MSW
+            {
+                var val = (ulong)frac[i] * BatchBase + carry;
+                frac[i] = (uint)val;
+                carry = val >> 32;
+            }
+            // carry is 0..999_999_999 — the next 9 decimal digits
+            var batch = ((uint)carry).ToString("D9");
+            var charsToWrite = Math.Min(DecimalFracDigits - g * 9, 9);
+            writer.Write(batch, 0, charsToWrite);
+        }
+    }
+
     public override string ToString()
     {
         if (IntegerPart < 0)

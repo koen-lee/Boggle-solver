@@ -4,7 +4,8 @@
       "Bash(dotnet build:*)",
       "Bash(dotnet test:*)",
       "Bash(git filter-repo:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(dotnet run:*)"
     ]
   }
 }

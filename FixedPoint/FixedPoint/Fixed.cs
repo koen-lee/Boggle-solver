@@ -233,18 +233,8 @@ public readonly partial struct Fixed<TSize> : IComparable<Fixed<TSize>>, IEquata
         var a = IntegerPart < 0 ? Negate() : this;
         var b = other.IntegerPart < 0 ? other.Negate() : other;
 
-        int N = TSize.Value + 1;
-        var words = new uint[N];
-        UInt128 carry = 0;
-        for (var d = 0; d <= 2 * TSize.Value; d++)
-        {
-            UInt128 sum = carry;
-            for (var i = Math.Max(0, d - TSize.Value); i <= Math.Min(d, TSize.Value); i++)
-                sum += (ulong)a._words[i] * b._words[d - i];
-            if (d >= TSize.Value)
-                words[d - TSize.Value] = (uint)sum;
-            carry = sum >> 32;
-        }
+        var words = new uint[TSize.Value + 1];
+        TSize.Multiply(a._words, b._words, words);
 
         var result = new Fixed<TSize>(words);
         return negative ? result.Negate() : result;
