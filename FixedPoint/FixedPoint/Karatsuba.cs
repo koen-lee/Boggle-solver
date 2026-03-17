@@ -9,12 +9,18 @@ namespace FixedPoint;
 internal static class Karatsuba
 {
     // Use schoolbook below this word count.
-    private const int SchoolbookThreshold = 4;
+    private const int SchoolbookThreshold = 32;
 
     /// <summary>
     /// Writes the high n words of a·b into result, where n = a.Length = b.Length = result.Length.
     /// </summary>
     public static void MultiplyHigh(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result)
+        => MultiplyHigh(a, b, result, SchoolbookThreshold);
+
+    /// <summary>
+    /// Writes the high n words of a·b into result using Karatsuba with the given schoolbook threshold.
+    /// </summary>
+    public static void MultiplyHigh(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> result, int threshold)
     {
         int n = a.Length;
         uint[] buf = ArrayPool<uint>.Shared.Rent(2 * n);
@@ -22,7 +28,7 @@ internal static class Karatsuba
         {
             var full = buf.AsSpan(0, 2 * n);
             full.Clear();
-            FullMultiply(a, b, full);
+            FullMultiply(a, b, full, threshold);
             full.Slice(n - 1, n).CopyTo(result);
         }
         finally
@@ -55,10 +61,10 @@ internal static class Karatsuba
     /// Writes the full 2n-word product of a·b into out2n.
     /// Precondition: n = a.Length is a power of two; out2n.Length == 2*n.
     /// </summary>
-    private static void FullMultiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> out2n)
+    private static void FullMultiply(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> out2n, int threshold)
     {
         int n = a.Length;
-        if (n <= SchoolbookThreshold)
+        if (n <= threshold)
         {
             SchoolbookFull(a, b, out2n);
             return;
@@ -87,13 +93,13 @@ internal static class Karatsuba
 
             z0.Clear(); z2.Clear(); z1.Clear();
 
-            FullMultiply(a_lo, b_lo, z0);
-            FullMultiply(a_hi, b_hi, z2);
+            FullMultiply(a_lo, b_lo, z0, threshold);
+            FullMultiply(a_hi, b_hi, z2, threshold);
 
             uint ca = TruncatedAdd(a_lo, a_hi, midA);
             uint cb = TruncatedAdd(b_lo, b_hi, midB);
 
-            FullMultiply(midA, midB, z1[..n]);
+            FullMultiply(midA, midB, z1[..n], threshold);
 
             // Carry corrections: true mid_a = midA + ca*2^(half*32), similarly mid_b.
             // z1_true = midA*midB + ca*(midB<<half) + cb*(midA<<half) + ca*cb*(1<<n)
@@ -124,7 +130,7 @@ internal static class Karatsuba
     }
 
     /// <summary>
-    /// Full 2n-word schoolbook product. Used as the base case for n ≤ SchoolbookThreshold.
+    /// Full 2n-word schoolbook product. Used as the base case for n ≤ threshold.
     /// </summary>
     private static void SchoolbookFull(ReadOnlySpan<uint> a, ReadOnlySpan<uint> b, Span<uint> out2n)
     {
